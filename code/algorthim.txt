@@ -1,0 +1,39 @@
+**Graph setup**
+
+This algorithm generates new feature columns for rows in a given table.
+
+First, we define a graph where each node is a table in the database. There is an edge between nodes if there is some sort of foreign key relationship between them.
+
+**Make feature paths**
+To generate the new columns we start at the node we want to generate new columns for and start building feature paths.
+
+A feature path is an ordered list of nodes in the graph that can by joined (the sql sense of the word) to create a new table that contains the data necessary for aggregation.
+
+
+This path contains infromation on the nodes that are a part of it, as well as the columns of interest. There are two types of columns, the algorithm is interested in. First, it looks for variables that will be the values to make a new column out out. Second, it will look for categorical variables that it can filter the first type of variable by.
+
+To identify categorical variables in a table uses two metrics
+
+- The number of distict values in the column
+- The ratio of distinct values to total values
+
+If a column is below the a determined threshhold for both of these metrics, it is determined to be a categorical column.
+
+
+After all nodes have been added to a feature path, the algorithm does one more pass looking for more categorical variables. This is because categorical variable do not necessarily have to be a part of the path. This second pass looks for categories that connected to the path but not part of it. in example 1, the title category is not in any feature path.
+
+**Calculate new values**
+Finally, we must create the new columns for the target table.
+
+To this we iterate over each feature path and add in the columns it provides.
+
+For each feature path, we iterate over the value columns and perform the statistical functions on the all rows such as average, std, or max value.
+
+For each of these columns we create a new feature columns that is fitered by different categorical variable values. To this, we look at each distinct value of a categorical variable and only aggregate rows that match that constraint. This results in several new columns being created for 
+
+
+
+
+
+Example 1
+For example, if we look at the employees database provided by mysql.org.

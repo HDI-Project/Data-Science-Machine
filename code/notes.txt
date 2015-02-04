@@ -1,0 +1,10 @@
+create mapping between column and available stats on it
+
+enum --> count
+float --> avg, std
+text --> length, topic model???
+
+
+
+
+do something around finding the user table
