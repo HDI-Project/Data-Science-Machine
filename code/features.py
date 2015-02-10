@@ -9,13 +9,18 @@ from sqlalchemy.orm import sessionmaker
 from compile_query import compile_query
 from sqlalchemy.sql.elements import ColumnClause
 
+from table import Table
+
 
 class Database:
     def __init__(self, url):
         self.engine = create_engine(url)
-        self.metadata = MetaData()
-        self.metadata.reflect(self.engine)
-        self.tables  = self.metadata.sorted_tables
+        self.metadata = MetaData(bind=self.engine)
+        self.metadata.reflect()
+        self.tables  = dict([(t.name, Table(t, self)) for t in self.metadata.sorted_tables])
+        for t in self.tables:
+            # if t == "Order Details":
+            self.tables[t].flatten()
         self.session = sessionmaker(bind=self.engine)()
         
     def query(self, *args, **kwargs):
@@ -30,9 +35,14 @@ class Database:
         """
         refs = []
         for t in self.tables:
-            for ref in t.foreign_keys:
+           for ref in t.foreign_keys:
                 if ref.column.table == table:
-                    refs.append(t)
+                    add = {
+                        'table' : t,
+                        'column' : ref
+                    }
+                    pdb.set_trace()
+                    refs.append(add)
 
         return refs
 
@@ -73,29 +83,14 @@ class Database:
         return feature_paths
 
 
-    def get_column_of_type(self, table, t, allow_primary=False):
-        """
-        given the table named table return the columns of type True
-        """
-        # pdb.set_trace()
-        cols = []
-        for c in table.columns:
-            if not type(c.type) == t or c.primary_key or len(c.foreign_keys) != 0:
-                continue
-            cols.append(c)
 
-        return cols
-
-
-    def get_primary_keys(model):
-        return [c for c in model.__table__.columns if c.primary_key]
 
     def find_paths(self, table):
         # queue = [[r] for r in get_refs(table, backref_only=True)]
         queue = [
             {
-                'path' : [table],
-                'exclude' : set([table]),
+                'path' : [{'table':table, 'join':None}],
+                'exclude' : set([table]), #exclude is probably broken
                 'columns' : [],
                 'groups'  : [],
             }
@@ -104,7 +99,7 @@ class Database:
         completed_paths = []
         while queue:
             feature_path = queue.pop(0)
-            node = feature_path['path'][-1]
+            node = feature_path['path'][-1]['table']
             refs = [ref for ref in self.get_refs(node) if ref not in feature_path['exclude']]
 
             if len(refs) == 0 and len(feature_path['columns']) != 0:    
@@ -127,8 +122,6 @@ class Database:
                 # pdb.set_trace()
                 new_groups = self.get_categorical_columns(ref) #rethink 
 
-                # print new_groups, label
-
                 new_feature_path = {
                     'path'      : new_path,
                     'exclude'   : list(feature_path['exclude']) + refs,
@@ -143,24 +136,24 @@ class Database:
         return extended_paths
 
     def make_table_features(self, idx):
-
         table = self.tables[idx]
-        print table
+        primary_keys = [x[1] for x in table.primary_key.columns.items()]
+
         subquerys = []
         feature_paths = self.find_paths(table)
-        primary_keys = [x[1] for x in table.primary_key.columns.items()]
         for fp in feature_paths:
             select = list(primary_keys)     
+
             groups = [None] + fp['groups'] #add none so we calculate columns before grouping
             for g in groups:
                 vals = [None]
-
                 if g is not None:
                     vals = self.query(g).distinct().all()
 
                 for v in vals:
                     if v != None:
                         v = getattr(v, g.name)
+
                     for c in fp['columns']:         
                         column = c['column']
                         label = c['label'] 
@@ -168,16 +161,12 @@ class Database:
                             label = g.name + '.' + str(v) + '.' + c['label'] 
                         
                         new_select = select + [
-                            func.avg(column).label('avg.'+label),
-                            # func.std(column).label('std.'+label),
-                            # func.max(column).label('max.'+label),
-                            # func.min(column).label('min.'+label),
-                            # func.sum(column).label('sum.'+label),
-                            # func.count(column).label('count.'+label),
+                            func.avg(column).label('avg.'+label)
                         ]
                     # pdb.set_trace()
                     sq = self.query(*new_select)
-                    sq = sq.join(*fp['path'][1:])
+                    for (table,join) in fp['path']:
+                        sq = sq.join(table, join)
                     sq = sq.group_by(table)
 
                     if v != None:
@@ -203,11 +192,13 @@ class Database:
 
 
 if __name__ == "__main__":
-    database_name = 'northwind'
+    database_name = 'employees'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
-    qry = db.make_table_features(6)
-    qry_str =  compile_query(qry)
-    print qry_str
+    # dsm_database_name = 'dsm'
+    # dsm_db = Database('mysql+mysqldb://kanter@localhost/%s' % (dsm_database_name) ) 
+    # qry = db.make_table_features(6)
+    # qry_str =  compile_query(qry)
+    # print qry_str
     # output = qry.all()
     # print str(len(output[0])) + " per row"
     # to_csv(output, table.__tablename__+".csv")

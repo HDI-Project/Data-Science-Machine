@@ -8,3 +8,33 @@ text --> length, topic model???
 
 
 do something around finding the user table
+
+
+Good ideas:
+- propose prediction problems
+- explain factors leading to label
+- 
+
+
+Automate data science pipeline
+
+Preprocessing --> Feature Engineering --> Modeling --> Validation/Insights
+
+	- Automatic feature generation from an exisiting database
+	- my approach is modeled after how a data scientist works
+	- it can cuts down on repeat work
+	- insights can be deeper
+
+
+
+
+
+
+
+
+
+# func.std(column).label('std.'+label),
+# func.max(column).label('max.'+label),
+# func.min(column).label('min.'+label),
+# func.sum(column).label('sum.'+label),
+# func.count(column).label('count.'+label),
