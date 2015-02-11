@@ -1,3 +1,6 @@
 make sure dsm doesnt calculate pointless values such as decile for the day of the week or decile of a decile
 
 errors with duplicate columns
+
+
+add in meadian as function
