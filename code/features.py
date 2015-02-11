@@ -20,7 +20,7 @@ class Database:
         self.tables  = dict([(t.name, Table(t, self)) for t in self.metadata.sorted_tables])
         for t in self.tables:
             # if t == "Order Details":
-            self.tables[t].flatten()
+            self.tables[t].make_agg_features()
         self.session = sessionmaker(bind=self.engine)()
         
     def query(self, *args, **kwargs):
@@ -192,7 +192,7 @@ class Database:
 
 
 if __name__ == "__main__":
-    database_name = 'employees'
+    database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
     # dsm_database_name = 'dsm'
     # dsm_db = Database('mysql+mysqldb://kanter@localhost/%s' % (dsm_database_name) ) 
