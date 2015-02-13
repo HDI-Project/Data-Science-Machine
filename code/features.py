@@ -1,204 +1,203 @@
-import pdb
-from sqlalchemy import distinct
-from sqlalchemy import Table
-from sqlalchemy import Column, DateTime, String, Integer, Enum, ForeignKey, func
-from sqlalchemy.dialects.mysql.base import DECIMAL
-from sqlalchemy.schema import MetaData
-from sqlalchemy.engine import create_engine
-from sqlalchemy.orm import sessionmaker
-from compile_query import compile_query
-from sqlalchemy.sql.elements import ColumnClause
+from database import Database
+import sqlalchemy.dialects.mysql.base as column_datatypes
 
-from table import Table
+#############################
+# Table feature functions  #
+#############################
 
+def make_agg_features(db, table):
+    print 'making agg features %s' % (table.table.name)
+    if table.has_agg_features:
+        print 'skipping agg %s' % (table.table.name)
+        return
 
-class Database:
-    def __init__(self, url):
-        self.engine = create_engine(url)
-        self.metadata = MetaData(bind=self.engine)
-        self.metadata.reflect()
-        self.tables  = dict([(t.name, Table(t, self)) for t in self.metadata.sorted_tables])
-        for t in self.tables:
-            # if t == "Order Details":
-            self.tables[t].make_agg_features()
-        self.session = sessionmaker(bind=self.engine)()
+    print db.get_related_fks(table)
+    for fk in db.get_related_fks(table):
+        related_table = db.tables[fk.parent.table.name]
         
-    def query(self, *args, **kwargs):
-        return self.session.query(*args, **kwargs)
+        #make sure this related table has calculatd features
+        make_flat_features(db, related_table, caller=table)
 
-    def get_refs(self, table, backref_only=False):
-        """
-        takes in a table and returns a list of tables that refer to items
+        #determine columns to aggregate
+        numeric_cols = related_table.get_numeric_columns(ignore_relationships=True)
+        if len(numeric_cols) == 0:
+            continue
 
-        TODO: what to do about self refercing tables
-              look into return columns that ref rather than tables
-        """
-        refs = []
-        for t in self.tables:
-           for ref in t.foreign_keys:
-                if ref.column.table == table:
-                    add = {
-                        'table' : t,
-                        'column' : ref
-                    }
-                    pdb.set_trace()
-                    refs.append(add)
+        agg_select = []
+        set_values = []
+        # pdb.set_trace()
+        for col in numeric_cols:
+            for func in ["count", "sum", 'avg', 'std', 'max', 'min']:
+                new_col = "{func}.{table_name}.{col_name}".format(func=func,col_name=col['name'], table_name=related_table.table.name)
+                
+                select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
+                agg_select.append(select)
 
-        return refs
+                value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col)
+                set_values.append(value)
 
-    def get_categorical_columns(self, table, NUM_DISTINCT=10, PERCENT_DISTINCT=.05):
-        total = self.query(table).count()
-        columns = [c for c in table.columns if len(c.foreign_keys) == 0] #reconsider filtering out foreign_keys
-        if len(columns) == 0:
-            return []
-        s = [func.count(distinct(c)) for c in columns]
-        qry = db.session.query(*s)
-        cat_columns = [c[1] for c in zip(qry.first(), columns) if c[0] < NUM_DISTINCT and float(c[0])/total <PERCENT_DISTINCT ]
-
-        return cat_columns
-
-
-    def extra_groups(self,feature_paths):
-        """
-        add categorial groups that are one step off the created path
-        """
-        for fp in feature_paths:
-            new_path = []
-            for node in fp['path']:
-                new_path.append(node)
-                for ref in self.get_refs(node):
-                    if ref in fp['path']:
-                        continue
-
-                    cols_add = self.get_categorical_columns(ref) #IDEA: do join with path before trying to find cat columns. this way we might excluded categories that only end up being relevent on certain paths
-
-                    if cols_add != []:
-                        fp['groups'] += cols_add
-                        new_path.append(ref)
-
-
-            fp['path'] = new_path
-
-
-        return feature_paths
-
-
-
-
-    def find_paths(self, table):
-        # queue = [[r] for r in get_refs(table, backref_only=True)]
-        queue = [
-            {
-                'path' : [{'table':table, 'join':None}],
-                'exclude' : set([table]), #exclude is probably broken
-                'columns' : [],
-                'groups'  : [],
-            }
-        ]
-
-        completed_paths = []
-        while queue:
-            feature_path = queue.pop(0)
-            node = feature_path['path'][-1]['table']
-            refs = [ref for ref in self.get_refs(node) if ref not in feature_path['exclude']]
-
-            if len(refs) == 0 and len(feature_path['columns']) != 0:    
-                completed_paths.append(feature_path)
-                continue
-
-            for ref in refs:
-                new_path = list(feature_path['path']) + [ref]
-                label = '.'.join([table.name for table in new_path])
-
-                new_columns = []
-                for c in self.get_column_of_type(ref, DECIMAL):
-                    # pdb.set_trace()
-                    new_columns.append({
-                        'column' : c,
-                        'label' : label
-                    })
-
-                print node, ref
-                # pdb.set_trace()
-                new_groups = self.get_categorical_columns(ref) #rethink 
-
-                new_feature_path = {
-                    'path'      : new_path,
-                    'exclude'   : list(feature_path['exclude']) + refs,
-                    'columns'   : list(feature_path['columns']) + new_columns,
-                    'groups'    : list(feature_path['groups']) + new_groups
-
+                new_metadata = {
+                    'feature_type' : 'agg_feature',
+                    'agg_feature_type' : func,
+                    'numeric' : True,
+                    'excluded_agg_ops' : table.agg_func_exclude.get(func, None)
                 }
 
-                queue.append(new_feature_path)
+                table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
+            # pdb.set_trace()
 
-        extended_paths = self.extra_groups(completed_paths) #this 
-        return extended_paths
+        table.flush_columns()
 
-    def make_table_features(self, idx):
-        table = self.tables[idx]
-        primary_keys = [x[1] for x in table.primary_key.columns.items()]
+        params = {
+            "fk_select" : "`rt`.`%s`" % fk.parent.name,
+            "agg_select" : ", ".join(agg_select),
+            "set_values" : ", ".join(set_values),
+            "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
+            "related_table" : related_table.table.name,
+            "table" : table.table.name,
+        }
 
-        subquerys = []
-        feature_paths = self.find_paths(table)
-        for fp in feature_paths:
-            select = list(primary_keys)     
+        
+        qry = """
+        UPDATE `{table}` a
+        LEFT JOIN ( SELECT {fk_select}, {agg_select}
+               FROM `{related_table}` rt
+               GROUP BY {fk_select}
+            ) b
+        ON {fk_join_on}
+        SET {set_values}
+        """.format(**params)
 
-            groups = [None] + fp['groups'] #add none so we calculate columns before grouping
-            for g in groups:
-                vals = [None]
-                if g is not None:
-                    vals = self.query(g).distinct().all()
+        table.engine.execute(qry)
 
-                for v in vals:
-                    if v != None:
-                        v = getattr(v, g.name)
+    table.has_agg_features = True
 
-                    for c in fp['columns']:         
-                        column = c['column']
-                        label = c['label'] 
-                        if v != None:
-                            label = g.name + '.' + str(v) + '.' + c['label'] 
-                        
-                        new_select = select + [
-                            func.avg(column).label('avg.'+label)
-                        ]
-                    # pdb.set_trace()
-                    sq = self.query(*new_select)
-                    for (table,join) in fp['path']:
-                        sq = sq.join(table, join)
-                    sq = sq.group_by(table)
 
-                    if v != None:
-                        sq = sq.filter(g == v)
-                        
-                    sq = sq.subquery()
-                    subquerys.append(sq)
+def make_flat_features(db, table, caller=None):
+    """
+    add in columns from tables that this table has a foreign key to as well as make sure row features are made
+    notes:
+    - this methord will make sure  foreign tables have made all before adding their columns
+    - a table will only be flatten once
+    - ignores flattening info from caller
+    """
+    make_row_features(db, table)
+    print 'making flat features %s' % (table.table.name)
+    if table.has_flat_features:
+        print 'skipping flat %s' % (table.table.name)
+        return
 
-        #get columns from all the subquerys for select statement
-        columns = []
-        for sq in subquerys:
-            columns += [c for c in sq.columns if type(c) == ColumnClause]
+    for fk in table.table.foreign_keys:
+        foreign_table = db.tables[fk.column.table.name]
+        if foreign_table in [table, caller]:
+            continue
+        make_flat_features(db, foreign_table)
 
-        #construct query and join all the subqueries together
-        select = table.columns + columns
-        qry = self.query(*select)
-        for sq in subquerys:
-            join = [getattr(sq.c,pk.name)==getattr(table.c,pk.name) for pk in primary_keys]
-            qry = qry.outerjoin(sq, *join)
+        #add columns from foreign table
+        to_add = foreign_table.get_column_info(prefix=fk.parent.name + ".", ignore_relationships=True)
+        set_values = []
+        for col in to_add:
+            table.create_column(col['fullname'], col['type'].compile())
+            set_values.append(
+                "a.`%s`=b.`%s`" %
+                (col['fullname'], col['name'])
+            )
+        table.flush_columns()
 
-        return qry
+        #add column values
+        set_value = ','.join(set_values)
+        where = "a.`%s`=b.`%s`" % (fk.parent.name, fk.column.name)
+        qry = """
+        UPDATE `{table}` a, `{foreign_table}` b
+        SET {set}
+        WHERE {where}
+        """.format(table=table.table.name, foreign_table=foreign_table.table.name, set=set_value, where=where)
+        table.engine.execute(qry)
 
+    table.has_flat_features = True
+    print 'done making flat features %s' % (table.table.name)
+
+
+def make_row_features(db, table):
+    print 'making row features %s' % (table.table.name)
+    if not table.has_row_features:
+        convert_datetime_weekday(table)
+        add_ntiles(table)
+        table.has_row_features = True
+        print 'done row features %s' % (table.table.name)
+    else:
+        print 'skip row features %s' % (table.table.name)
+
+
+#############################
+# Row feature functions     #
+#############################
+def convert_datetime_weekday(table):
+    for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
+        new_col = col['name'] + "_weekday"
+        metadata = {
+            'feature_type' : 'row_feature',
+            'row_feature_type' : 'weekday',
+            'agg_operations' : []
+        }
+        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=metadata,flush=True)
+        table.engine.execute(
+            """
+            UPDATE `%s` t
+            set `%s` = WEEKDAY(t.`%s`)
+            """ % (table.table.name, new_col, col['name'])
+        ) #very bad, fix how parameters are substituted in
+        
+
+def add_ntiles(table, n=10):
+    for col in table.get_numeric_columns(ignore_relationships=True):
+        new_col = col['name'] + "_decile"
+        metadata = {
+            'feature_type' : 'row_feature',
+            'row_feature_type' : 'ntile',
+            'numeric' : False,
+            'excluded_agg_ops' : ['sum']
+        }
+        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=metadata, flush=True)
+        select_pk = ", ".join(["`%s`"%pk for pk in table.primary_key_names])
+
+        where_pk = ""
+        first = True
+        for pk in table.primary_key_names:
+            if not first:
+                where_pk += " AND "
+                # print where_pk
+            where_pk += "`%s` = `%s`.`%s`" % (pk, table.table.name, pk)
+            first = False
+
+        qry = """
+        UPDATE `{table}`
+        SET `{table}`.`{new_col}` = 
+        (
+            select round({n}*(cnt-rank+1)/cnt,0) as decile from
+            (
+                SELECT  {select_pk}, @curRank := @curRank + 1 AS rank
+                FROM   `{table}` p,
+                (
+                    SELECT @curRank := 0) r
+                    ORDER BY `{col_name}` desc
+                ) as dt,
+                (
+                    select count(*) as cnt
+                    from `{table}`
+                ) as ct
+            WHERE {where_pk}
+        );
+        """.format(table=table.table.name, new_col=new_col, n=n, col_name=col['name'], select_pk=select_pk, where_pk=where_pk)
+        table.engine.execute(qry) #very bad, fix how parameters are substituted in
+
+
+        
+    
 
 
 if __name__ == "__main__":
     database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
-    # dsm_database_name = 'dsm'
-    # dsm_db = Database('mysql+mysqldb://kanter@localhost/%s' % (dsm_database_name) ) 
-    # qry = db.make_table_features(6)
-    # qry_str =  compile_query(qry)
-    # print qry_str
-    # output = qry.all()
-    # print str(len(output[0])) + " per row"
-    # to_csv(output, table.__tablename__+".csv")
+
+    make_agg_features(db, db.tables['Orders'])

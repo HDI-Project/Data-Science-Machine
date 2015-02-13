@@ -5,6 +5,7 @@ float --> avg, std
 text --> length, topic model???
 
 
+do decile for all rows and all rows with similar foreign key
 
 
 do something around finding the user table
@@ -33,8 +34,14 @@ Preprocessing --> Feature Engineering --> Modeling --> Validation/Insights
 
 
 
+
+
+
 # func.std(column).label('std.'+label),
 # func.max(column).label('max.'+label),
 # func.min(column).label('min.'+label),
 # func.sum(column).label('sum.'+label),
 # func.count(column).label('count.'+label),
+
+
+# shopify add on
