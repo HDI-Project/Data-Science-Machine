@@ -15,34 +15,35 @@ agg_func_exclude = {
     'min' : set(['sum']),
 }
 
+MAX_FUNC_TO_APPLY = 2
 
-def make_all_features(db, table, caller=None):
+def make_all_features(db, table, caller=None, depth=0):
     caller_name = 'no caller'
     if caller:
         caller_name = caller.table.name
-    print 'making all features %s, caller= %s' % (table.table.name, caller_name)
-    make_agg_features(db, table, caller)
-    make_flat_features(db, table, caller)
-    make_row_features(db, table, caller)
+    print "*"*depth + 'making all features %s, caller= %s' % (table.table.name, caller_name)
+    # pdb.set_trace()
+    make_agg_features(db, table, caller, depth)
+    make_flat_features(db, table, caller, depth)
+    make_row_features(db, table, caller, depth)
 
 
-def make_agg_features(db, table, caller):
+def make_agg_features(db, table, caller, depth):
     caller_name = 'no caller'
     if caller:
         caller_name = caller.table.name
-    print 'making agg features %s, caller= %s' % (table.table.name, caller_name)
+    print "*"*depth +  'making agg features %s, caller= %s' % (table.table.name, caller_name)
 
     if table.has_agg_features:
-        print 'skipping agg %s' % (table.table.name)
+        print "*"*depth +  'skipping agg %s' % (table.table.name)
         return
 
-    print db.get_related_fks(table)
     for fk in db.get_related_fks(table):
         related_table = db.tables[fk.parent.table.name]
         
         #make sure this related table has calculatd features
         if related_table != caller:
-            make_all_features(db, related_table, caller=table)
+            make_all_features(db, related_table, caller=table, depth=depth+1)
 
         #determine columns to aggregate
         numeric_cols = related_table.get_numeric_columns(ignore_relationships=True)
@@ -54,13 +55,34 @@ def make_agg_features(db, table, caller):
         # pdb.set_trace()
         for col in numeric_cols:
             funcs = set(["sum", 'avg', 'std', 'max', 'min'])
-            if 'allowed_agg_funcs' in col['metadata']:
-                funcs = funcs.intersection(col['metadata']['allowed_agg_funcs'])
-            if 'excluded_agg_funcs' in col['metadata']:
+            #order is important here, otherwise exclude can overwrite the white list of allowed
+            if  col['metadata']['excluded_agg_funcs'] != None:
                 funcs = funcs - col['metadata']['excluded_agg_funcs']
+            if col['metadata']['allowed_agg_funcs'] != None:
+                funcs = funcs.intersection(col['metadata']['allowed_agg_funcs'])
+
+
+            if len(funcs) == 0:
+                continue
+            
+            if col['metadata']['row_feature_type'] == "weekday":
+                pdb.set_trace()
 
             for func in funcs:
-                new_col = "{func}.{table_name}.{col_name}".format(func=func,col_name=col['name'], table_name=related_table.table.name)
+                new_col = "{func}.[{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk.parent.name)
+                
+                new_metadata = dict(col['metadata'])
+    
+                new_metadata.update({
+                    'feature_type' : 'agg',
+                    'agg_feature_type' : func,
+                    'numeric' : True,
+                    'excluded_agg_funcs' : agg_func_exclude.get(func, None),
+                    'funcs_applied' : col['metadata'].get('funcs_applied', 0) + 1
+                })
+
+                if new_metadata['funcs_applied'] > MAX_FUNC_TO_APPLY:
+                    continue
                 
                 select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
                 agg_select.append(select)
@@ -68,12 +90,6 @@ def make_agg_features(db, table, caller):
                 value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col)
                 set_values.append(value)
 
-                new_metadata = {
-                    'feature_type' : 'agg_feature',
-                    'agg_feature_type' : func,
-                    'numeric' : True,
-                    'excluded_agg_funcs' : agg_func_exclude.get(func, None)
-                }
 
                 table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
             # pdb.set_trace()
@@ -105,7 +121,7 @@ def make_agg_features(db, table, caller):
     table.has_agg_features = True
 
 
-def make_flat_features(db, table, caller):
+def make_flat_features(db, table, caller, depth):
     """
     add in columns from tables that this table has a foreign key to as well as make sure row features are made
     notes:
@@ -116,11 +132,11 @@ def make_flat_features(db, table, caller):
     caller_name = 'no caller'
     if caller:
         caller_name = caller.table.name
-    print 'making flat features %s, caller= %s' % (table.table.name, caller_name)
+    print "*"*depth +  'making flat features %s, caller= %s' % (table.table.name, caller_name)
     
 
     if table.has_flat_features:
-        print 'skipping flat %s' % (table.table.name)
+        print "*"*depth +  'skipping flat %s' % (table.table.name)
         return
 
     for fk in table.table.foreign_keys:
@@ -128,13 +144,18 @@ def make_flat_features(db, table, caller):
         if foreign_table in [table, caller]:
             continue
 
-        make_all_features(db, foreign_table, caller=table)
+        make_all_features(db, foreign_table, caller=table, depth=depth+1)
 
         #add columns from foreign table
         to_add = foreign_table.get_column_info(prefix=fk.parent.name + ".", ignore_relationships=True)
         set_values = []
         for col in to_add:
-            table.create_column(col['fullname'], col['type'].compile())
+            new_metadata = dict(col['metadata'])
+            new_metadata.update({
+                'feature_type' : 'flat',
+            })
+
+            table.create_column(col['fullname'], col['type'].compile(), metadata=new_metadata)
             set_values.append(
                 "a.`%s`=b.`%s`" %
                 (col['fullname'], col['name'])
@@ -152,29 +173,29 @@ def make_flat_features(db, table, caller):
         table.engine.execute(qry)
 
     table.has_flat_features = True
-    print 'done making flat features %s' % (table.table.name)
+    #print "*"*depth +  'done making flat features %s' % (table.table.name)
 
 
-def make_row_features(db, table, caller):
-    print 'making row features %s' % (table.table.name)
+def make_row_features(db, table, caller, depth):
+    print "*"*depth +  'making row features %s' % (table.table.name)
     if not table.has_row_features:
         convert_datetime_weekday(table)
         add_ntiles(table)
         table.has_row_features = True
-        print 'done row features %s' % (table.table.name)
+        #print "*"*depth +  'done row features %s' % (table.table.name)
     else:
-        print 'skip row features %s' % (table.table.name)
+        print "*"*depth +  'skip row features %s' % (table.table.name)
 
 
 #############################
 # Row feature functions     #
 #############################
 def check_flat_allowed(col, func):
-    if 'allowed_flat_funcs' in col['metadata']:
-        return func in col['metadata']['allowed_flat_funcs']
+    if col['metadata']['allowed_row_funcs']:
+        return func in col['metadata']['allowed_row_funcs']
 
-    if 'excluded_flat_funcs' in col['metadata']:
-        return func not in col['metadata']['excluded_flat_funcs']
+    if col['metadata']['excluded_row_funcs']:
+        return func not in col['metadata']['excluded_row_funcs']
 
     return True
 
@@ -183,13 +204,18 @@ def convert_datetime_weekday(table):
     for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
         if not check_flat_allowed(col, 'convert_datetime_weekday'):
             continue
-        new_col = col['name'] + "_weekday"
-        metadata = {
-            'feature_type' : 'row_feature',
+        new_col = "[{col_name}]_weekday".format(col_name=col['name'])
+        new_metadata = dict(col['metadata'])
+        
+        new_metadata.update({
+            'feature_type' : 'row',
             'row_feature_type' : 'weekday',
-            'allowed_agg_funcs' : set([])
-        }
-        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=metadata,flush=True)
+            'allowed_agg_funcs' : set([]),
+            'excluded_row_funcs' : col['metadata']['excluded_row_funcs'].union(['add_ntiles']),
+            'funcs_applied' : col['metadata']['funcs_applied'] + 1
+        })
+
+        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata,flush=True)
         table.engine.execute(
             """
             UPDATE `%s` t
@@ -203,15 +229,22 @@ def add_ntiles(table, n=10):
         if not check_flat_allowed(col, 'add_ntiles'):
             continue
 
-        new_col = col['name'] + "_decile"
-        metadata = {
-            'feature_type' : 'row_feature',
+        new_col = "[{col_name}]_decile".format(col_name=col['name'])
+        new_metadata = dict(col['metadata'])
+        new_metadata.update({
+            'feature_type' : 'row',
             'row_feature_type' : 'ntile',
             'numeric' : False,
             'excluded_agg_funcs' : set(['sum']),
-            'excluded_flat_funcs' : set(['add_ntiles'])
-        }
-        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=metadata, flush=True)
+            'excluded_row_funcs' : set(['add_ntiles']),
+            'funcs_applied' : col['metadata']['funcs_applied'] + 1
+        })
+
+        if new_metadata.get('funcs_applied') > MAX_FUNC_TO_APPLY:
+            continue
+
+
+        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata, flush=True)
         select_pk = ", ".join(["`%s`"%pk for pk in table.primary_key_names])
 
         where_pk = ""
@@ -219,7 +252,6 @@ def add_ntiles(table, n=10):
         for pk in table.primary_key_names:
             if not first:
                 where_pk += " AND "
-                # print where_pk
             where_pk += "`%s` = `%s`.`%s`" % (pk, table.table.name, pk)
             first = False
 

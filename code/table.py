@@ -8,6 +8,22 @@ from sqlalchemy.schema import Table
 
 from sqlalchemy.schema import MetaData
 
+DEFAULT_METADATA = {
+    'feature_type' : 'original', #original, row, agg, flat
+
+    'funcs_applied' : 0,
+
+    'agg_feature_type' : None,
+    'row_feature_type' : None,
+
+    'numeric' : False,
+    
+    'allowed_agg_funcs' : None,
+    'excluded_agg_funcs' : set([]),
+    'allowed_row_funcs' : None,
+    'excluded_row_funcs' : set([]),
+}
+
 
 class DSMTable:
     def __init__(self, table, db):
@@ -25,7 +41,7 @@ class DSMTable:
         self.has_agg_features = False
         self.has_flat_features = False
 
-        self.column_metadata = {}
+        self.column_metadata = dict([(c.name, DEFAULT_METADATA) for c in table.c])
 
     #############################
     # Database write operations #

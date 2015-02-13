@@ -1,6 +1,12 @@
-make sure dsm doesnt calculate pointless values such as decile for the day of the week or decile of a decile
+- make sure dsm doesnt calculate pointless values such as decile for the day of the week or decile of a decile
 
-errors with duplicate columns
+- add in meadian as function
+
+- think about central place to implement rules about applying functions
+
+- how to name agg columns
 
 
-add in meadian as function
+bugs
+agg functions are applied to weekday
+depth in print
