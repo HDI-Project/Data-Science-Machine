@@ -18,7 +18,6 @@ class Database:
         """
         related_columns = []
         for related in self.tables.values():
-        	# pdb.set_trace()
             for fk in related.table.foreign_keys:
                 if fk.column.table == table.table:
                     related_columns.append(fk)

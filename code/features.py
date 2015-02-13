@@ -1,3 +1,6 @@
+import pdb
+import os
+
 from database import Database
 import sqlalchemy.dialects.mysql.base as column_datatypes
 
@@ -5,8 +8,30 @@ import sqlalchemy.dialects.mysql.base as column_datatypes
 # Table feature functions  #
 #############################
 
-def make_agg_features(db, table):
-    print 'making agg features %s' % (table.table.name)
+#["count", "sum", 'avg', 'std', 'max', 'min']
+agg_func_exclude = {
+    'avg' : set(['sum']),
+    'max' : set(['sum']),
+    'min' : set(['sum']),
+}
+
+
+def make_all_features(db, table, caller=None):
+    caller_name = 'no caller'
+    if caller:
+        caller_name = caller.table.name
+    print 'making all features %s, caller= %s' % (table.table.name, caller_name)
+    make_agg_features(db, table, caller)
+    make_flat_features(db, table, caller)
+    make_row_features(db, table, caller)
+
+
+def make_agg_features(db, table, caller):
+    caller_name = 'no caller'
+    if caller:
+        caller_name = caller.table.name
+    print 'making agg features %s, caller= %s' % (table.table.name, caller_name)
+
     if table.has_agg_features:
         print 'skipping agg %s' % (table.table.name)
         return
@@ -16,7 +41,8 @@ def make_agg_features(db, table):
         related_table = db.tables[fk.parent.table.name]
         
         #make sure this related table has calculatd features
-        make_flat_features(db, related_table, caller=table)
+        if related_table != caller:
+            make_all_features(db, related_table, caller=table)
 
         #determine columns to aggregate
         numeric_cols = related_table.get_numeric_columns(ignore_relationships=True)
@@ -27,7 +53,13 @@ def make_agg_features(db, table):
         set_values = []
         # pdb.set_trace()
         for col in numeric_cols:
-            for func in ["count", "sum", 'avg', 'std', 'max', 'min']:
+            funcs = set(["sum", 'avg', 'std', 'max', 'min'])
+            if 'allowed_agg_funcs' in col['metadata']:
+                funcs = funcs.intersection(col['metadata']['allowed_agg_funcs'])
+            if 'excluded_agg_funcs' in col['metadata']:
+                funcs = funcs - col['metadata']['excluded_agg_funcs']
+
+            for func in funcs:
                 new_col = "{func}.{table_name}.{col_name}".format(func=func,col_name=col['name'], table_name=related_table.table.name)
                 
                 select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
@@ -40,7 +72,7 @@ def make_agg_features(db, table):
                     'feature_type' : 'agg_feature',
                     'agg_feature_type' : func,
                     'numeric' : True,
-                    'excluded_agg_ops' : table.agg_func_exclude.get(func, None)
+                    'excluded_agg_funcs' : agg_func_exclude.get(func, None)
                 }
 
                 table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
@@ -73,7 +105,7 @@ def make_agg_features(db, table):
     table.has_agg_features = True
 
 
-def make_flat_features(db, table, caller=None):
+def make_flat_features(db, table, caller):
     """
     add in columns from tables that this table has a foreign key to as well as make sure row features are made
     notes:
@@ -81,8 +113,12 @@ def make_flat_features(db, table, caller=None):
     - a table will only be flatten once
     - ignores flattening info from caller
     """
-    make_row_features(db, table)
-    print 'making flat features %s' % (table.table.name)
+    caller_name = 'no caller'
+    if caller:
+        caller_name = caller.table.name
+    print 'making flat features %s, caller= %s' % (table.table.name, caller_name)
+    
+
     if table.has_flat_features:
         print 'skipping flat %s' % (table.table.name)
         return
@@ -91,7 +127,8 @@ def make_flat_features(db, table, caller=None):
         foreign_table = db.tables[fk.column.table.name]
         if foreign_table in [table, caller]:
             continue
-        make_flat_features(db, foreign_table)
+
+        make_all_features(db, foreign_table, caller=table)
 
         #add columns from foreign table
         to_add = foreign_table.get_column_info(prefix=fk.parent.name + ".", ignore_relationships=True)
@@ -118,7 +155,7 @@ def make_flat_features(db, table, caller=None):
     print 'done making flat features %s' % (table.table.name)
 
 
-def make_row_features(db, table):
+def make_row_features(db, table, caller):
     print 'making row features %s' % (table.table.name)
     if not table.has_row_features:
         convert_datetime_weekday(table)
@@ -132,13 +169,25 @@ def make_row_features(db, table):
 #############################
 # Row feature functions     #
 #############################
+def check_flat_allowed(col, func):
+    if 'allowed_flat_funcs' in col['metadata']:
+        return func in col['metadata']['allowed_flat_funcs']
+
+    if 'excluded_flat_funcs' in col['metadata']:
+        return func not in col['metadata']['excluded_flat_funcs']
+
+    return True
+
+
 def convert_datetime_weekday(table):
     for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
+        if not check_flat_allowed(col, 'convert_datetime_weekday'):
+            continue
         new_col = col['name'] + "_weekday"
         metadata = {
             'feature_type' : 'row_feature',
             'row_feature_type' : 'weekday',
-            'agg_operations' : []
+            'allowed_agg_funcs' : set([])
         }
         table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=metadata,flush=True)
         table.engine.execute(
@@ -151,12 +200,16 @@ def convert_datetime_weekday(table):
 
 def add_ntiles(table, n=10):
     for col in table.get_numeric_columns(ignore_relationships=True):
+        if not check_flat_allowed(col, 'add_ntiles'):
+            continue
+
         new_col = col['name'] + "_decile"
         metadata = {
             'feature_type' : 'row_feature',
             'row_feature_type' : 'ntile',
             'numeric' : False,
-            'excluded_agg_ops' : ['sum']
+            'excluded_agg_funcs' : set(['sum']),
+            'excluded_flat_funcs' : set(['add_ntiles'])
         }
         table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=metadata, flush=True)
         select_pk = ", ".join(["`%s`"%pk for pk in table.primary_key_names])
@@ -197,7 +250,9 @@ def add_ntiles(table, n=10):
 
 
 if __name__ == "__main__":
+    os.system("mysql -t < ../Northwind.MySQL5.sql")
+
     database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
 
-    make_agg_features(db, db.tables['Orders'])
+    make_all_features(db, db.tables['Orders'])

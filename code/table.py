@@ -10,13 +10,6 @@ from sqlalchemy.schema import MetaData
 
 
 class DSMTable:
-    #["count", "sum", 'avg', 'std', 'max', 'min']
-    agg_func_exclude = {
-        'avg' : ['sum'],
-        'max' : ['sum'],
-        'min' : ['sum'],
-    }
-
     def __init__(self, table, db):
         self.db = db
         self.table = table
@@ -33,8 +26,6 @@ class DSMTable:
         self.has_flat_features = False
 
         self.column_metadata = {}
-
-        # [self.drop_column(x) for x in self.added_columns]
 
     #############################
     # Database write operations #
@@ -151,7 +142,4 @@ class DSMTable:
     def has_column(self, name):
         return name in [c.name for c in self.table.c]
 
-    
 
-
-#mysql -t < Northwind.MySQL5.sql 
