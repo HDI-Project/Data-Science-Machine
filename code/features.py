@@ -3,7 +3,7 @@ import os
 
 from database import Database
 import sqlalchemy.dialects.mysql.base as column_datatypes
-
+import numpy as np
 #############################
 # Table feature functions  #
 #############################
@@ -13,6 +13,7 @@ agg_func_exclude = {
     'avg' : set(['sum']),
     'max' : set(['sum']),
     'min' : set(['sum']),
+    'std' : set(['std'])
 }
 
 MAX_FUNC_TO_APPLY = 2
@@ -26,6 +27,14 @@ def make_all_features(db, table, caller=None, depth=0):
     make_agg_features(db, table, caller, depth)
     make_flat_features(db, table, caller, depth)
     make_row_features(db, table, caller, depth)
+    remove_low_variance_features(db, table, caller, depth)
+
+def remove_low_variance_features(db, table, caller, depth):
+    cols = table.get_column_info()
+    if len(cols) == 0:
+        return
+    data = np.array(table.get_num_distinct(cols).fetchall(), dtype=np.float)
+    pdb.set_trace()
 
 
 def make_agg_features(db, table, caller, depth):
@@ -55,6 +64,7 @@ def make_agg_features(db, table, caller, depth):
         # pdb.set_trace()
         for col in numeric_cols:
             funcs = set(["sum", 'avg', 'std', 'max', 'min'])
+
             #order is important here, otherwise exclude can overwrite the white list of allowed
             if  col['metadata']['excluded_agg_funcs'] != None:
                 funcs = funcs - col['metadata']['excluded_agg_funcs']
@@ -69,7 +79,7 @@ def make_agg_features(db, table, caller, depth):
                 pdb.set_trace()
 
             for func in funcs:
-                new_col = "{func}.[{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk.parent.name)
+                new_col = "{func}.[{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk.parent.table.name)
                 
                 new_metadata = dict(col['metadata'])
     
@@ -78,10 +88,10 @@ def make_agg_features(db, table, caller, depth):
                     'agg_feature_type' : func,
                     'numeric' : True,
                     'excluded_agg_funcs' : agg_func_exclude.get(func, None),
-                    'funcs_applied' : col['metadata'].get('funcs_applied', 0) + 1
+                    'funcs_applied' : new_metadata['funcs_applied'] + [func]
                 })
 
-                if new_metadata['funcs_applied'] > MAX_FUNC_TO_APPLY:
+                if len(new_metadata['funcs_applied']) > MAX_FUNC_TO_APPLY:
                     continue
                 
                 select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
@@ -210,9 +220,10 @@ def convert_datetime_weekday(table):
         new_metadata.update({
             'feature_type' : 'row',
             'row_feature_type' : 'weekday',
+            'numeric' : False,
             'allowed_agg_funcs' : set([]),
             'excluded_row_funcs' : col['metadata']['excluded_row_funcs'].union(['add_ntiles']),
-            'funcs_applied' : col['metadata']['funcs_applied'] + 1
+            'funcs_applied' : new_metadata['funcs_applied'] + ["weekday"]
         })
 
         table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata,flush=True)
@@ -237,10 +248,10 @@ def add_ntiles(table, n=10):
             'numeric' : False,
             'excluded_agg_funcs' : set(['sum']),
             'excluded_row_funcs' : set(['add_ntiles']),
-            'funcs_applied' : col['metadata']['funcs_applied'] + 1
+            'funcs_applied' : new_metadata['funcs_applied'] + ['ntiles']
         })
 
-        if new_metadata.get('funcs_applied') > MAX_FUNC_TO_APPLY:
+        if len(new_metadata.get('funcs_applied')) > MAX_FUNC_TO_APPLY:
             continue
 
 
@@ -277,7 +288,7 @@ def add_ntiles(table, n=10):
         table.engine.execute(qry) #very bad, fix how parameters are substituted in
 
 
-        
+
     
 
 
@@ -287,4 +298,5 @@ if __name__ == "__main__":
     database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
 
+    # db.tables['Orders'].to_csv('/tmp/orders.csv')
     make_all_features(db, db.tables['Orders'])

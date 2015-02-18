@@ -3,6 +3,8 @@ from sqlalchemy.schema import MetaData
 from sqlalchemy.engine import create_engine
 from sqlalchemy.orm import sessionmaker
 from table import DSMTable
+import cPickle as pickle
+
 
 class Database:
     def __init__(self, url):
@@ -11,6 +13,13 @@ class Database:
         self.metadata.reflect()
         self.tables  = dict([(t.name, DSMTable(t, self)) for t in self.metadata.sorted_tables])
         self.session = sessionmaker(bind=self.engine)()
+
+    def save(self, filename):
+        pickle.dump( self, open(filename, "wb" ) )
+
+    @staticmethod
+    def load(filename):
+        return pickle.load( open( filename, "rb" ) )
 
     def get_related_fks(self, table):
         """

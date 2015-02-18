@@ -46,10 +46,5 @@ Preprocessing --> Feature Engineering --> Modeling --> Validation/Insights
 
 # shopify add on
 
-
-
-- fixed infinite loop issue while making features
-- put some code in place to excluded certain functions based on column type
-- made parameter to limit number of funcs applied
-- changed column notation so it is easier to read what functions were applied
-- reorganized classes and broke code into separate files
+	
+cluster and then try to predict

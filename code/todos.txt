@@ -1,3 +1,5 @@
+- column predictions
+
 - make sure dsm doesnt calculate pointless values such as decile for the day of the week or decile of a decile
 
 - add in meadian as function
@@ -5,6 +7,12 @@
 - think about central place to implement rules about applying functions
 
 - how to name agg columns
+
+- ordering of flat vs row
+
+
+-clustering? eg product recommendation
+
 
 
 bugs
