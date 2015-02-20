@@ -4,6 +4,7 @@ import os
 from database import Database
 import sqlalchemy.dialects.mysql.base as column_datatypes
 import numpy as np
+import inflect
 #############################
 # Table feature functions  #
 #############################
@@ -15,6 +16,7 @@ agg_func_exclude = {
     'min' : set(['sum']),
     'std' : set(['std'])
 }
+p = inflect.engine()
 
 MAX_FUNC_TO_APPLY = 2
 
@@ -24,17 +26,31 @@ def make_all_features(db, table, caller=None, depth=0):
         caller_name = caller.table.name
     print "*"*depth + 'making all features %s, caller= %s' % (table.table.name, caller_name)
     # pdb.set_trace()
+    # prune_features(db, table, caller, depth)
     make_agg_features(db, table, caller, depth)
     make_flat_features(db, table, caller, depth)
     make_row_features(db, table, caller, depth)
-    remove_low_variance_features(db, table, caller, depth)
+    prune_features(db, table, caller, depth)
 
-def remove_low_variance_features(db, table, caller, depth):
+def prune_features(db, table, caller, depth):
+    caller_name = 'no caller'
+    if caller:
+        caller_name = caller.table.name
+
+    if caller == table:
+        return
+
+    print "*"*depth +  'removing features %s, caller= %s' % (table.table.name, caller_name)
     cols = table.get_column_info()
     if len(cols) == 0:
         return
-    data = np.array(table.get_num_distinct(cols).fetchall(), dtype=np.float)
-    pdb.set_trace()
+    counts = np.array(table.get_num_distinct(cols), dtype=np.float)
+    for i in np.where(counts==1)[0]:
+        print "drop", table.table.name, cols[i]['name']
+        table.drop_column(cols[i]['name'])
+    table.flush_columns()
+
+    # pdb.set_trace()
 
 
 def make_agg_features(db, table, caller, depth):
@@ -76,10 +92,16 @@ def make_agg_features(db, table, caller, depth):
                 continue
             
             if col['metadata']['row_feature_type'] == "weekday":
-                pdb.set_trace()
+                raise Exception("unexpected feature")
 
             for func in funcs:
-                new_col = "{func}.[{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk.parent.table.name)
+                #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
+                if fk.parent.name != fk.column.name:
+                    fk_name = fk.parent.name
+                else:
+                    fk_name = fk.parent.table.name
+
+                new_col = "[{func}.{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk_name)
                 
                 new_metadata = dict(col['metadata'])
     
@@ -100,7 +122,7 @@ def make_agg_features(db, table, caller, depth):
                 value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col)
                 set_values.append(value)
 
-
+                print "add col", table.table.name, new_col
                 table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
             # pdb.set_trace()
 
@@ -157,7 +179,18 @@ def make_flat_features(db, table, caller, depth):
         make_all_features(db, foreign_table, caller=table, depth=depth+1)
 
         #add columns from foreign table
-        to_add = foreign_table.get_column_info(prefix=fk.parent.name + ".", ignore_relationships=True)
+        #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
+        if fk.parent.name != fk.column.name:
+            prefix = fk.parent.name
+        else:
+            prefix = fk.column.table.name
+            singular = p.singular_noun(fk.column.table.name)
+            if singular:
+                prefix = singular
+
+
+
+        to_add = foreign_table.get_column_info(prefix=prefix + ".", ignore_relationships=True)
         set_values = []
         for col in to_add:
             new_metadata = dict(col['metadata'])
@@ -221,6 +254,7 @@ def convert_datetime_weekday(table):
             'feature_type' : 'row',
             'row_feature_type' : 'weekday',
             'numeric' : False,
+            'categorical' : True,
             'allowed_agg_funcs' : set([]),
             'excluded_row_funcs' : col['metadata']['excluded_row_funcs'].union(['add_ntiles']),
             'funcs_applied' : new_metadata['funcs_applied'] + ["weekday"]

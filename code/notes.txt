@@ -8,14 +8,20 @@ text --> length, topic model???
 do decile for all rows and all rows with similar foreign key
 
 
-do something around finding the user table
-
-
 Good ideas:
 - propose prediction problems
 - explain factors leading to label
-- 
+- study which patterns of variables most often are exlcuded
+- interval problem
+- do something around finding the user table
 
+
+kalyan 
+- corruption from shared path
+- temporal stuff
+
+feature pruning, semantic features
+- variance
 
 Automate data science pipeline
 
@@ -25,9 +31,6 @@ Preprocessing --> Feature Engineering --> Modeling --> Validation/Insights
 	- my approach is modeled after how a data scientist works
 	- it can cuts down on repeat work
 	- insights can be deeper
-
-
-
 
 
 

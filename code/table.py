@@ -18,6 +18,7 @@ DEFAULT_METADATA = {
     'row_feature_type' : None,
 
     'numeric' : False,
+    'categorical' : False,
     
     'allowed_agg_funcs' : None,
     'excluded_agg_funcs' : set([]),
@@ -96,7 +97,7 @@ class DSMTable:
         #second, flush columns that need to be dropped
         values = []
         for name in self.cols_to_drop:
-            del self.column_metadata[name]
+            self.column_metadata[name]['dropped'] = True
             values.append("DROP `%s`" % (name))
         if len(values) > 0:
             values = ", ".join(values)
@@ -113,6 +114,7 @@ class DSMTable:
         #third, flush columns that need to be added
         values = []
         for (name, col_type) in self.cols_to_add:
+            self.column_metadata[name]['dropped'] = False
             self.column_metadata[name]['flushed'] = True
             values.append("ADD COLUMN `%s` %s" % (name, col_type))
         if len(values) > 0:
@@ -222,13 +224,13 @@ class DSMTable:
 
     def get_num_distinct(self, cols):
         column_names = [c['name'] for c in cols]
-        SELECT = ','.join(["count(distinct(`%s`)"%c for c in column_names])
+        SELECT = ','.join(["count(distinct(`%s`))"%c for c in column_names])
 
         qry = """
         SELECT {SELECT} from `{table}`
         """.format(SELECT=SELECT, table=self.table.name)
 
-        count = self.engine.execute(qry).fetchall()[0]
+        counts = self.engine.execute(qry).fetchall()[0]
         
         return counts
 
