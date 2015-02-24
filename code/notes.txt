@@ -25,14 +25,10 @@ feature pruning, semantic features
 
 Automate data science pipeline
 
-Preprocessing --> Feature Engineering --> Modeling --> Validation/Insights
-
-	- Automatic feature generation from an exisiting database
-	- my approach is modeled after how a data scientist works
-	- it can cuts down on repeat work
-	- insights can be deeper
 
 
+- 50% add paths for features
+- updated code to match written algorithm better
 
 
 

@@ -12,6 +12,8 @@ from sqlalchemy.schema import MetaData
 DEFAULT_METADATA = {
     'feature_type' : 'original', #original, row, agg, flat
 
+    'path' : [], 
+
     'funcs_applied' : [],
 
     'agg_feature_type' : None,

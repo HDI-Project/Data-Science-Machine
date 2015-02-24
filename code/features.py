@@ -25,11 +25,13 @@ def make_all_features(db, table, caller=None, depth=0):
     if caller:
         caller_name = caller.table.name
     print "*"*depth + 'making all features %s, caller= %s' % (table.table.name, caller_name)
-    # pdb.set_trace()
-    # prune_features(db, table, caller, depth)
+
+    for related in db.get_related_tables(table):
+        make_all_features(db, related, caller=table, depth=depth+1)
+
     make_agg_features(db, table, caller, depth)
-    make_flat_features(db, table, caller, depth)
     make_row_features(db, table, caller, depth)
+    make_flat_features(db, table, caller, depth)
     prune_features(db, table, caller, depth)
 
 def prune_features(db, table, caller, depth):
@@ -52,6 +54,23 @@ def prune_features(db, table, caller, depth):
 
     # pdb.set_trace()
 
+def allowed_agg_funcs(col):
+    """
+    given a column, use the metadata to determine which aggregate functions are allowed to be performed
+    """
+    if len(col['metadata']['path']) > MAX_FUNC_TO_APPLY:
+        return []
+
+    funcs = set(["sum", 'avg', 'std', 'max', 'min'])
+
+    order is important here, otherwise exclude can overwrite the white list of allowed
+    if  col['metadata']['excluded_agg_funcs'] != None:
+        funcs = funcs - col['metadata']['excluded_agg_funcs']
+    if col['metadata']['allowed_agg_funcs'] != None:
+        funcs = funcs.intersection(col['metadata']['allowed_agg_funcs'])
+    
+    return funcs
+
 
 def make_agg_features(db, table, caller, depth):
     caller_name = 'no caller'
@@ -65,10 +84,6 @@ def make_agg_features(db, table, caller, depth):
 
     for fk in db.get_related_fks(table):
         related_table = db.tables[fk.parent.table.name]
-        
-        #make sure this related table has calculatd features
-        if related_table != caller:
-            make_all_features(db, related_table, caller=table, depth=depth+1)
 
         #determine columns to aggregate
         numeric_cols = related_table.get_numeric_columns(ignore_relationships=True)
@@ -77,23 +92,11 @@ def make_agg_features(db, table, caller, depth):
 
         agg_select = []
         set_values = []
-        # pdb.set_trace()
         for col in numeric_cols:
-            funcs = set(["sum", 'avg', 'std', 'max', 'min'])
-
-            #order is important here, otherwise exclude can overwrite the white list of allowed
-            if  col['metadata']['excluded_agg_funcs'] != None:
-                funcs = funcs - col['metadata']['excluded_agg_funcs']
-            if col['metadata']['allowed_agg_funcs'] != None:
-                funcs = funcs.intersection(col['metadata']['allowed_agg_funcs'])
-
+            funcs = allowed_agg_funcs(col)
 
             if len(funcs) == 0:
                 continue
-            
-            if col['metadata']['row_feature_type'] == "weekday":
-                raise Exception("unexpected feature")
-
             for func in funcs:
                 #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
                 if fk.parent.name != fk.column.name:
@@ -104,17 +107,19 @@ def make_agg_features(db, table, caller, depth):
                 new_col = "[{func}.{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk_name)
                 
                 new_metadata = dict(col['metadata'])
-    
-                new_metadata.update({
+
+                path_add = {
+                    'base_column': col,
                     'feature_type' : 'agg',
-                    'agg_feature_type' : func,
+                    'feature_type_func' : func
+                }
+
+
+                new_metadata.update({
+                    'path' : new_metadata['path'] + [path_add],
                     'numeric' : True,
-                    'excluded_agg_funcs' : agg_func_exclude.get(func, None),
-                    'funcs_applied' : new_metadata['funcs_applied'] + [func]
                 })
 
-                if len(new_metadata['funcs_applied']) > MAX_FUNC_TO_APPLY:
-                    continue
                 
                 select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
                 agg_select.append(select)
@@ -219,6 +224,17 @@ def make_flat_features(db, table, caller, depth):
     #print "*"*depth +  'done making flat features %s' % (table.table.name)
 
 
+#############################
+# Row feature functions     #
+#############################
+def row_funcs_is_allowed(col, func):
+    if len(col['column']['path']) > MAX_FUNC_TO_APPLY:
+        return []
+        
+
+    #todo 
+    return []
+
 def make_row_features(db, table, caller, depth):
     print "*"*depth +  'making row features %s' % (table.table.name)
     if not table.has_row_features:
@@ -230,23 +246,13 @@ def make_row_features(db, table, caller, depth):
         print "*"*depth +  'skip row features %s' % (table.table.name)
 
 
-#############################
-# Row feature functions     #
-#############################
-def check_flat_allowed(col, func):
-    if col['metadata']['allowed_row_funcs']:
-        return func in col['metadata']['allowed_row_funcs']
-
-    if col['metadata']['excluded_row_funcs']:
-        return func not in col['metadata']['excluded_row_funcs']
-
-    return True
 
 
 def convert_datetime_weekday(table):
     for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
-        if not check_flat_allowed(col, 'convert_datetime_weekday'):
+        if not allowed_row_funcs(col, 'convert_datetime_weekday'):
             continue
+
         new_col = "[{col_name}]_weekday".format(col_name=col['name'])
         new_metadata = dict(col['metadata'])
         
@@ -271,23 +277,23 @@ def convert_datetime_weekday(table):
 
 def add_ntiles(table, n=10):
     for col in table.get_numeric_columns(ignore_relationships=True):
-        if not check_flat_allowed(col, 'add_ntiles'):
-            continue
-
         new_col = "[{col_name}]_decile".format(col_name=col['name'])
         new_metadata = dict(col['metadata'])
-        new_metadata.update({
-            'feature_type' : 'row',
-            'row_feature_type' : 'ntile',
+        path_add = {
+                    'base_column': col,
+                    'feature_type' : 'row',
+                    'feature_type_func' : "ntile"
+                }
+
+        new_metadata.update({ 
+            'path' : new_metadata['path'] + [path_add],
             'numeric' : False,
-            'excluded_agg_funcs' : set(['sum']),
-            'excluded_row_funcs' : set(['add_ntiles']),
-            'funcs_applied' : new_metadata['funcs_applied'] + ['ntiles']
+            # 'excluded_agg_funcs' : set(['sum']),
+            # 'excluded_row_funcs' : set(['add_ntiles']),
         })
 
-        if len(new_metadata.get('funcs_applied')) > MAX_FUNC_TO_APPLY:
+        if len(new_metadata['path']) > MAX_FUNC_TO_APPLY:
             continue
-
 
         table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata, flush=True)
         select_pk = ", ".join(["`%s`"%pk for pk in table.primary_key_names])
@@ -325,7 +331,6 @@ def add_ntiles(table, n=10):
 
     
 
-
 if __name__ == "__main__":
     os.system("mysql -t < ../Northwind.MySQL5.sql")
 
@@ -334,3 +339,4 @@ if __name__ == "__main__":
 
     # db.tables['Orders'].to_csv('/tmp/orders.csv')
     make_all_features(db, db.tables['Orders'])
+#beaumont
