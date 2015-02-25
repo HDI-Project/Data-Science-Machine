@@ -5,17 +5,13 @@ from database import Database
 import sqlalchemy.dialects.mysql.base as column_datatypes
 import numpy as np
 import inflect
+import agg_functions
 #############################
 # Table feature functions  #
 #############################
 
 #["count", "sum", 'avg', 'std', 'max', 'min']
-agg_func_exclude = {
-    'avg' : set(['sum']),
-    'max' : set(['sum']),
-    'min' : set(['sum']),
-    'std' : set(['std'])
-}
+
 p = inflect.engine()
 
 MAX_FUNC_TO_APPLY = 2
@@ -32,44 +28,50 @@ def make_all_features(db, table, caller=None, depth=0):
     make_agg_features(db, table, caller, depth)
     make_row_features(db, table, caller, depth)
     make_flat_features(db, table, caller, depth)
-    prune_features(db, table, caller, depth)
+    # prune_features(db, table, caller, depth)
 
-def prune_features(db, table, caller, depth):
-    caller_name = 'no caller'
-    if caller:
-        caller_name = caller.table.name
+#delete once funcionality is added to allow_agg_funcs
+# def prune_features(db, table, caller, depth):
+#     caller_name = 'no caller'
+#     if caller:
+#         caller_name = caller.table.name
 
-    if caller == table:
-        return
+#     if caller == table:
+#         return
 
-    print "*"*depth +  'removing features %s, caller= %s' % (table.table.name, caller_name)
-    cols = table.get_column_info()
-    if len(cols) == 0:
-        return
-    counts = np.array(table.get_num_distinct(cols), dtype=np.float)
-    for i in np.where(counts==1)[0]:
-        print "drop", table.table.name, cols[i]['name']
-        table.drop_column(cols[i]['name'])
-    table.flush_columns()
+#     print "*"*depth +  'removing features %s, caller= %s' % (table.table.name, caller_name)
+#     cols = table.get_column_info()
+#     if len(cols) == 0:
+#         return
+#     counts = np.array(table.get_num_distinct(cols), dtype=np.float)
+#     for i in np.where(counts==1)[0]:
+#         print "drop", table.table.name, cols[i]['name']
+#         table.drop_column(cols[i]['name'])
+#     table.flush_columns()
 
-    # pdb.set_trace()
+
+#############################
+# Agg feature functions     #
+#############################
 
 def allowed_agg_funcs(col):
     """
     given a column, use the metadata to determine which aggregate functions are allowed to be performed
+
+    todo: don't allow any function on columns that are all the same value
     """
+  
+
     if len(col['metadata']['path']) > MAX_FUNC_TO_APPLY:
         return []
 
-    funcs = set(["sum", 'avg', 'std', 'max', 'min'])
+    allowed = [] 
 
-    order is important here, otherwise exclude can overwrite the white list of allowed
-    if  col['metadata']['excluded_agg_funcs'] != None:
-        funcs = funcs - col['metadata']['excluded_agg_funcs']
-    if col['metadata']['allowed_agg_funcs'] != None:
-        funcs = funcs.intersection(col['metadata']['allowed_agg_funcs'])
+    for func in agg_functions.export:
+        if func.col_allowed(col):
+            allowed.append(col)
     
-    return funcs
+    return allowed
 
 
 def make_agg_features(db, table, caller, depth):
@@ -86,17 +88,17 @@ def make_agg_features(db, table, caller, depth):
         related_table = db.tables[fk.parent.table.name]
 
         #determine columns to aggregate
-        numeric_cols = related_table.get_numeric_columns(ignore_relationships=True)
-        if len(numeric_cols) == 0:
-            continue
-
         agg_select = []
         set_values = []
-        for col in numeric_cols:
+        new_features = False
+        for col in related_table.get_column_info():
             funcs = allowed_agg_funcs(col)
 
             if len(funcs) == 0:
                 continue
+            else:
+                new_features = True
+
             for func in funcs:
                 #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
                 if fk.parent.name != fk.column.name:
@@ -114,13 +116,12 @@ def make_agg_features(db, table, caller, depth):
                     'feature_type_func' : func
                 }
 
-
                 new_metadata.update({
                     'path' : new_metadata['path'] + [path_add],
                     'numeric' : True,
+                    'categorical' : False
                 })
 
-                
                 select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
                 agg_select.append(select)
 
@@ -129,7 +130,9 @@ def make_agg_features(db, table, caller, depth):
 
                 print "add col", table.table.name, new_col
                 table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
-            # pdb.set_trace()
+        
+        if not new_features:
+            continue
 
         table.flush_columns()
 
@@ -158,11 +161,15 @@ def make_agg_features(db, table, caller, depth):
     table.has_agg_features = True
 
 
+
+
+#############################
+# Flat feature functions    #
+#############################
 def make_flat_features(db, table, caller, depth):
     """
     add in columns from tables that this table has a foreign key to as well as make sure row features are made
     notes:
-    - this methord will make sure  foreign tables have made all before adding their columns
     - a table will only be flatten once
     - ignores flattening info from caller
     """
@@ -181,8 +188,6 @@ def make_flat_features(db, table, caller, depth):
         if foreign_table in [table, caller]:
             continue
 
-        make_all_features(db, foreign_table, caller=table, depth=depth+1)
-
         #add columns from foreign table
         #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
         if fk.parent.name != fk.column.name:
@@ -199,8 +204,17 @@ def make_flat_features(db, table, caller, depth):
         set_values = []
         for col in to_add:
             new_metadata = dict(col['metadata'])
-            new_metadata.update({
+
+            path_add = {
+                'base_column': col,
                 'feature_type' : 'flat',
+                'feature_type_func' : None
+            }
+
+            new_metadata.update({ 
+                'path' : new_metadata['path'] + [path_add],
+                'numeric' : False,
+                'categorical' : True
             })
 
             table.create_column(col['fullname'], col['type'].compile(), metadata=new_metadata)
@@ -208,6 +222,7 @@ def make_flat_features(db, table, caller, depth):
                 "a.`%s`=b.`%s`" %
                 (col['fullname'], col['name'])
             )
+
         table.flush_columns()
 
         #add column values
@@ -231,7 +246,6 @@ def row_funcs_is_allowed(col, func):
     if len(col['column']['path']) > MAX_FUNC_TO_APPLY:
         return []
         
-
     #todo 
     return []
 
@@ -245,9 +259,6 @@ def make_row_features(db, table, caller, depth):
     else:
         print "*"*depth +  'skip row features %s' % (table.table.name)
 
-
-
-
 def convert_datetime_weekday(table):
     for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
         if not allowed_row_funcs(col, 'convert_datetime_weekday'):
@@ -256,14 +267,16 @@ def convert_datetime_weekday(table):
         new_col = "[{col_name}]_weekday".format(col_name=col['name'])
         new_metadata = dict(col['metadata'])
         
-        new_metadata.update({
-            'feature_type' : 'row',
-            'row_feature_type' : 'weekday',
+        path_add = {
+                    'base_column': col,
+                    'feature_type' : 'row',
+                    'feature_type_func' : "weekday"
+                }
+
+        new_metadata.update({ 
+            'path' : new_metadata['path'] + [path_add],
             'numeric' : False,
-            'categorical' : True,
-            'allowed_agg_funcs' : set([]),
-            'excluded_row_funcs' : col['metadata']['excluded_row_funcs'].union(['add_ntiles']),
-            'funcs_applied' : new_metadata['funcs_applied'] + ["weekday"]
+            'categorical' : True
         })
 
         table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata,flush=True)
@@ -274,7 +287,6 @@ def convert_datetime_weekday(table):
             """ % (table.table.name, new_col, col['name'])
         ) #very bad, fix how parameters are substituted in
         
-
 def add_ntiles(table, n=10):
     for col in table.get_numeric_columns(ignore_relationships=True):
         new_col = "[{col_name}]_decile".format(col_name=col['name'])
@@ -327,9 +339,6 @@ def add_ntiles(table, n=10):
         """.format(table=table.table.name, new_col=new_col, n=n, col_name=col['name'], select_pk=select_pk, where_pk=where_pk)
         table.engine.execute(qry) #very bad, fix how parameters are substituted in
 
-
-
-    
 
 if __name__ == "__main__":
     os.system("mysql -t < ../Northwind.MySQL5.sql")

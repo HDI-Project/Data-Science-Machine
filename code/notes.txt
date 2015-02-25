@@ -23,14 +23,6 @@ kalyan
 feature pruning, semantic features
 - variance
 
-Automate data science pipeline
-
-
-
-- 50% add paths for features
-- updated code to match written algorithm better
-
-
 
 
 
