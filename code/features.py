@@ -6,6 +6,7 @@ import sqlalchemy.dialects.mysql.base as column_datatypes
 import numpy as np
 import inflect
 import agg_functions
+import datetime
 #############################
 # Table feature functions  #
 #############################
@@ -23,7 +24,9 @@ def make_all_features(db, table, caller=None, depth=0):
     print "*"*depth + 'making all features %s, caller= %s' % (table.table.name, caller_name)
 
     for related in db.get_related_tables(table):
-        make_all_features(db, related, caller=table, depth=depth+1)
+        #dont make_all on the caller and dont make all on yourself
+        if related != caller and related != table:
+            make_all_features(db, related, caller=table, depth=depth+1)
 
     make_agg_features(db, table, caller, depth)
     make_row_features(db, table, caller, depth)
@@ -54,25 +57,6 @@ def make_all_features(db, table, caller=None, depth=0):
 # Agg feature functions     #
 #############################
 
-def allowed_agg_funcs(col):
-    """
-    given a column, use the metadata to determine which aggregate functions are allowed to be performed
-
-    todo: don't allow any function on columns that are all the same value
-    """
-  
-
-    if len(col['metadata']['path']) > MAX_FUNC_TO_APPLY:
-        return []
-
-    allowed = [] 
-
-    for func in agg_functions.export:
-        if func.col_allowed(col):
-            allowed.append(col)
-    
-    return allowed
-
 
 def make_agg_features(db, table, caller, depth):
     caller_name = 'no caller'
@@ -83,80 +67,13 @@ def make_agg_features(db, table, caller, depth):
     if table.has_agg_features:
         print "*"*depth +  'skipping agg %s' % (table.table.name)
         return
-
+    
     for fk in db.get_related_fks(table):
-        related_table = db.tables[fk.parent.table.name]
+        if caller:
+            agg_functions.make_intervals(fk)
+        else:
+            agg_functions.apply_funcs(fk)
 
-        #determine columns to aggregate
-        agg_select = []
-        set_values = []
-        new_features = False
-        for col in related_table.get_column_info():
-            funcs = allowed_agg_funcs(col)
-
-            if len(funcs) == 0:
-                continue
-            else:
-                new_features = True
-
-            for func in funcs:
-                #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
-                if fk.parent.name != fk.column.name:
-                    fk_name = fk.parent.name
-                else:
-                    fk_name = fk.parent.table.name
-
-                new_col = "[{func}.{fk_name}.{col_name}]".format(func=func,col_name=col['name'], fk_name=fk_name)
-                
-                new_metadata = dict(col['metadata'])
-
-                path_add = {
-                    'base_column': col,
-                    'feature_type' : 'agg',
-                    'feature_type_func' : func
-                }
-
-                new_metadata.update({
-                    'path' : new_metadata['path'] + [path_add],
-                    'numeric' : True,
-                    'categorical' : False
-                })
-
-                select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=func.upper(),col_name=col['name'], new_col=new_col)
-                agg_select.append(select)
-
-                value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col)
-                set_values.append(value)
-
-                print "add col", table.table.name, new_col
-                table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
-        
-        if not new_features:
-            continue
-
-        table.flush_columns()
-
-        params = {
-            "fk_select" : "`rt`.`%s`" % fk.parent.name,
-            "agg_select" : ", ".join(agg_select),
-            "set_values" : ", ".join(set_values),
-            "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
-            "related_table" : related_table.table.name,
-            "table" : table.table.name,
-        }
-
-        
-        qry = """
-        UPDATE `{table}` a
-        LEFT JOIN ( SELECT {fk_select}, {agg_select}
-               FROM `{related_table}` rt
-               GROUP BY {fk_select}
-            ) b
-        ON {fk_join_on}
-        SET {set_values}
-        """.format(**params)
-
-        table.engine.execute(qry)
 
     table.has_agg_features = True
 
@@ -243,17 +160,17 @@ def make_flat_features(db, table, caller, depth):
 # Row feature functions     #
 #############################
 def row_funcs_is_allowed(col, func):
-    if len(col['column']['path']) > MAX_FUNC_TO_APPLY:
-        return []
+    if len(col['metadata']['path']) > MAX_FUNC_TO_APPLY:
+        return False
         
     #todo 
-    return []
+    return True
 
 def make_row_features(db, table, caller, depth):
     print "*"*depth +  'making row features %s' % (table.table.name)
     if not table.has_row_features:
         convert_datetime_weekday(table)
-        add_ntiles(table)
+        # add_ntiles(table)
         table.has_row_features = True
         #print "*"*depth +  'done row features %s' % (table.table.name)
     else:
@@ -261,7 +178,7 @@ def make_row_features(db, table, caller, depth):
 
 def convert_datetime_weekday(table):
     for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
-        if not allowed_row_funcs(col, 'convert_datetime_weekday'):
+        if not row_funcs_is_allowed(col, 'convert_datetime_weekday'):
             continue
 
         new_col = "[{col_name}]_weekday".format(col_name=col['name'])

@@ -27,6 +27,8 @@ feature pruning, semantic features
 
 
 
+what if sum and count aren't correlected
+what if things we expect to correlate don't?
 
 # func.std(column).label('std.'+label),
 # func.max(column).label('max.'+label),
@@ -39,3 +41,12 @@ feature pruning, semantic features
 
 	
 cluster and then try to predict
+
+
+
+
+
+kalyan 2/27
+- focus on time features and doing a predict
+- transfer learning from one database to another
+

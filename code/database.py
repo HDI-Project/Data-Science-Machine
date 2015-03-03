@@ -28,7 +28,7 @@ class Database:
         related_columns = []
         for related in self.tables.values():
             for fk in related.table.foreign_keys:
-                if fk.column.table == table.table:
+                if fk.column.table.name == table.table.name: # TODO: fix.  nmae is hack because these tables are differenct for some reason
                     related_columns.append(fk)
         return related_columns
 
@@ -38,12 +38,9 @@ class Database:
         """
         related_tables = set([])
         for related in self.tables.values():
-            if related == table:
-                continue
-
             for fk in related.table.foreign_keys:
                 if fk.column.table == table.table:
-                    add = self.tables[fk.column.table.name]
+                    add = self.tables[fk.parent.table.name]
                     related_tables.add(add)
 
             for fk in table.table.foreign_keys:

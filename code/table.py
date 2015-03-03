@@ -8,6 +8,8 @@ from sqlalchemy.schema import Table
 
 from sqlalchemy.schema import MetaData
 
+import datetime
+
 
 DEFAULT_METADATA = {
     'path' : [], 
@@ -36,6 +38,7 @@ class DSMTable:
 
         self.primary_key_names = [key.name for key in table.primary_key]
 
+        self.columns = set()
         self.cols_to_add = []
         self.cols_to_drop = []
         
@@ -43,23 +46,23 @@ class DSMTable:
         self.has_agg_features = False
         self.has_flat_features = False
 
-        self.init_metadata()
+        self.init_columns()
 
-    def init_metadata(self):
+
+    def init_columns(self):
         """
         make metadata for columns already in database and return the metadata dictionary
         """
         self.column_metadata = {}
         datatypes = [column_datatypes.INTEGER, column_datatypes.FLOAT, column_datatypes.DECIMAL, column_datatypes.DOUBLE, column_datatypes.SMALLINT, column_datatypes.MEDIUMINT]
-        categorical = self.get_categorical()
+        # categorical = self.get_categorical()
         # if len(categorical) > 0:
         #     pdb.set_trace()
 
-        for col in self.get_column_info():
-            add = dict(DEFAULT_METADATA) 
+        for col in self.table.c:
             add.update({
                 'numeric' : type(col['type']) in datatypes and not (col['primary_key'] or col['foreign_key']),
-                'categorical' : col['name'] in categorical
+                # 'categorical' : col['name'] in categorical
             })
 
             self.column_metadata[col['name']] = add
@@ -162,7 +165,7 @@ class DSMTable:
     ###############################
     # Table info helper functions #
     ###############################
-    def get_column_info(self, prefix='', ignore_relationships=False, match_func=None):
+    def get_column_info(self, prefix='', ignore_relationships=False, match_func=None, first=False, set_trace=False):
         """
         return info about columns in this table. 
         info should be things that are read directly from database or something that is dynamic at query time. everything else should be part of metadata
@@ -180,14 +183,21 @@ class DSMTable:
                 'column' : c,
                 'name' : c.name,
                 'fullname' : prefix + c.name,
+                'unique_name': self.table.name + '.' + c.name,
+                'table' : self,
                 'type' : c.type,
                 'primary_key' : c.primary_key,
                 'foreign_key' : len(c.foreign_keys)>0,
                 'metadata' : self.column_metadata.get(c.name, {}),
             }
+            if set_trace:    
+                pdb.set_trace()
 
             if match_func != None and not match_func(col):
                 continue
+
+            if first:
+                return col
 
             cols.append(col)
         
@@ -210,19 +220,25 @@ class DSMTable:
     def has_column(self, name):
         return name in [c.name for c in self.table.c]
 
-    def get_categorical(self, max_proportion_unique=.5, min_proportion_unique=0):
-        column_names = [c['name'] for c in self.get_column_info()]
-        SELECT = ','.join([("count(distinct(`%s`))/count(*)"%c) for c in column_names])
-
-        qry = """
-        SELECT {SELECT} from `{table}`
-        """.format(SELECT=SELECT, table=self.table.name)
-
-        proportions = self.engine.execute(qry).fetchall()[0]
+    def get_categorical(self, max_proportion_unique=.3, min_proportion_unique=0, max_num_unique=10):
+        cols = self.get_column_info()
+        column_names = [c['name'] for c in cols]
+        counts = self.get_num_distinct(cols)
         
-        return set([column_names[i] for i, val in enumerate(proportions) if val <= max_proportion_unique and val < min_proportion_unique])
+        qry = """
+        SELECT COUNT(*) from `{table}`
+        """.format(table=self.table.name)
+        total = float(self.engine.execute(qry).fetchall()[0][0])
+
+        if total == 0:
+            return set([])
+
+        return set([column_names[i] for i, count in enumerate(counts) if count>1 and count/total <= max_proportion_unique and count/total > min_proportion_unique and count<max_num_unique and len(self.column_metadata[column_names[i]]['path']) <= 1])
 
     def get_num_distinct(self, cols):
+        """
+        returns number of distinct values for each column in cols. returns in same order as cols_to_drop
+        """
         column_names = [c['name'] for c in cols]
         SELECT = ','.join(["count(distinct(`%s`))"%c for c in column_names])
 
@@ -234,6 +250,49 @@ class DSMTable:
         
         return counts
 
+    def get_distinct_vals(self, col_name):
+        #try to get cached distinct_vals
+        if 'distinct_vals' in self.column_metadata[col_name]:
+            return self.column_metadata[col_name]['distinct_vals']
+
+        qry = """
+        SELECT distinct(`{col_name}`) from `{table}`
+        """.format(col_name=col_name, table=self.table.name)
+
+        distinct = self.engine.execute(qry).fetchall()
+
+        vals = []
+        for d in distinct:
+            d = d[0]
+
+            if d in ["", None]:
+                continue
+
+            if type(d) == datetime.datetime:
+                continue
+
+            if type(d) == long:
+                d = int(d)
+
+            if d == "\x00":
+                d = False
+            elif d == "\x01":
+                d = True
+
+            vals.append(d)
+
+        #save distinct vals to cache
+        self.column_metadata[col_name]['distinct_vals'] = vals
+        
+        return vals      
+
+    def get_max_col_val(self, col):
+        qry = "SELECT MAX({col_name}) from {table}".format(col_name=col['name'], table=col.table.table.name)
+        result = self.col.table.engine.execute(qry).fetchall()
+        return result[0][0]
+
+
+
 
 
     def get_rows(self, cols):
@@ -244,9 +303,38 @@ class DSMTable:
 
         SELECT = ','.join([("`%s`"%c) for c in column_names])
 
+        pk = self.get_column_info(match_func= lambda x: x['primary_key'], first=True)
 
         qry = """
-        SELECT {SELECT} from `{table}`
-        """.format(SELECT=SELECT, table=self.table.name)
+        SELECT {SELECT} from `{table}` ORDER BY `{primary_key}`
+        """.format(SELECT=SELECT, table=self.table.name, primary_key=pk['name'])
+        rows = self.engine.execute(qry)
+
         return self.engine.execute(qry)
 
+
+    def get_rows_as_dict(self, cols):
+        """
+        return rows with values for the columns specificed by col
+        """
+        rows = self.get_rows(cols)
+        rows = [dict(r) for r in rows.fetchall()]
+        return rows
+
+
+class Column():
+    def __init__(self, column, metadata=None):
+        self.column = column
+        self.name = column.name
+        self.table : column.table
+        self.unique_name =  self.table.name + '.' + self.name,
+        self.type = column.type,
+        self.primary_key = self.column.primary_key,
+        self.foreign_key = len(c.foreign_keys)>0
+        
+        self.metadata = metadata
+        if not metadata:
+            self.metadata = dict(DEFAULT_METADATA)
+
+    def update_metadata(self, update):
+        
