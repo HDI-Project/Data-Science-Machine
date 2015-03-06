@@ -69,10 +69,10 @@ def make_agg_features(db, table, caller, depth):
         return
     
     for fk in db.get_related_fks(table):
-        if caller:
-            agg_functions.make_intervals(fk)
+        if not caller:
+            agg_functions.make_intervals(db, fk)
         else:
-            agg_functions.apply_funcs(fk)
+            agg_functions.apply_funcs(db,fk)
 
 
     table.has_agg_features = True
@@ -115,12 +115,13 @@ def make_flat_features(db, table, caller, depth):
             if singular:
                 prefix = singular
 
+        prefix += "."
 
-
-        to_add = foreign_table.get_column_info(prefix=prefix + ".", ignore_relationships=True)
+        to_add = foreign_table.get_column_info(ignore_relationships=True)
+        # pdb.set_trace()
         set_values = []
         for col in to_add:
-            new_metadata = dict(col['metadata'])
+            new_metadata = col.copy_metadata()
 
             path_add = {
                 'base_column': col,
@@ -134,10 +135,10 @@ def make_flat_features(db, table, caller, depth):
                 'categorical' : True
             })
 
-            table.create_column(col['fullname'], col['type'].compile(), metadata=new_metadata)
+            table.create_column(col.prefix_name(prefix), col.type.compile(), metadata=new_metadata)
             set_values.append(
                 "a.`%s`=b.`%s`" %
-                (col['fullname'], col['name'])
+                (col.prefix_name(prefix), col.name)
             )
 
         table.flush_columns()
@@ -160,7 +161,7 @@ def make_flat_features(db, table, caller, depth):
 # Row feature functions     #
 #############################
 def row_funcs_is_allowed(col, func):
-    if len(col['metadata']['path']) > MAX_FUNC_TO_APPLY:
+    if len(col.metadata['path']) > MAX_FUNC_TO_APPLY:
         return False
         
     #todo 
@@ -181,8 +182,8 @@ def convert_datetime_weekday(table):
         if not row_funcs_is_allowed(col, 'convert_datetime_weekday'):
             continue
 
-        new_col = "[{col_name}]_weekday".format(col_name=col['name'])
-        new_metadata = dict(col['metadata'])
+        new_col = "[{col_name}]_weekday".format(col_name=col.name)
+        new_metadata = col.copy_metadata()
         
         path_add = {
                     'base_column': col,
@@ -201,13 +202,13 @@ def convert_datetime_weekday(table):
             """
             UPDATE `%s` t
             set `%s` = WEEKDAY(t.`%s`)
-            """ % (table.table.name, new_col, col['name'])
+            """ % (table.table.name, new_col, col.name)
         ) #very bad, fix how parameters are substituted in
         
 def add_ntiles(table, n=10):
     for col in table.get_numeric_columns(ignore_relationships=True):
-        new_col = "[{col_name}]_decile".format(col_name=col['name'])
-        new_metadata = dict(col['metadata'])
+        new_col = "[{col_name}]_decile".format(col_name=col.name)
+        new_metadata = col.copy_metadata()
         path_add = {
                     'base_column': col,
                     'feature_type' : 'row',
@@ -253,7 +254,7 @@ def add_ntiles(table, n=10):
                 ) as ct
             WHERE {where_pk}
         );
-        """.format(table=table.table.name, new_col=new_col, n=n, col_name=col['name'], select_pk=select_pk, where_pk=where_pk)
+        """.format(table=table.table.name, new_col=new_col, n=n, col_name=col.name, select_pk=select_pk, where_pk=where_pk)
         table.engine.execute(qry) #very bad, fix how parameters are substituted in
 
 

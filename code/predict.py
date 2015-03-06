@@ -1,4 +1,4 @@
-from make_features import make_all_features
+from features import make_all_features
 from database import Database
 import numpy as np
 from sklearn import tree
@@ -117,17 +117,19 @@ class IntegerEncoder():
 
 
 def find_correlations(db, table):
-    all_cols = table.get_column_info(match_func=lambda x: x['metadata']['numeric'])
+    all_cols = table.get_column_info(match_func=lambda x: x.metadata['numeric'])
     
     skip = 3
     for target_col in all_cols:
         skip -= 1
         if skip >=0:
-            print "skip %s" % target_col['name']
+            print "skip %s" % target_col.name
             continue
-        path_cols = [p['base_column']['unique_name'] for p in target_col['metadata']['path']]
+        path_cols = [p['base_column'].unique_name for p in target_col.metadata['path']]
         print 'start predict'
-        predict_cols = table.get_column_info(match_func=lambda col, path_cols=path_cols, target_col=target_col: set(path_cols).intersection(set([p['base_column']['unique_name'] for p in col['metadata']['path']])) == set([]) and col['metadata']['numeric'] and col!=target_col)
+
+        #todo fix this ugly line
+        predict_cols = table.get_column_info(match_func=lambda col, path_cols=path_cols, target_col=target_col: set(path_cols).intersection(set([p['base_column'].unique_name for p in col.metadata['path']])) == set([]) and col.metadata['numeric'] and col!=target_col)
 
         rows = table.get_rows_as_dict(predict_cols) 
 
@@ -168,7 +170,7 @@ def find_correlations(db, table):
         using = [n for i,n in enumerate(names) if support[i]]
         using = zip(using,clf.named_steps['regression'].coef_)
 
-        print "predict %s" % target_col['name'], clf.score(rows,y), 'using:', sorted(using, key=lambda x: -abs(x[1]))
+        print "predict %s" % target_col.name, clf.score(rows,y), 'using:', sorted(using, key=lambda x: -abs(x[1]))
         # pdb.set_trace()
         print 
         print 
@@ -192,6 +194,6 @@ if __name__ == "__main__":
     database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name)) 
 
-    table_name = "Customers"
+    table_name = "Products"
     make_all_features(db, db.tables[table_name])
     find_correlations(db, db.tables[table_name])

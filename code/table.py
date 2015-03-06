@@ -9,6 +9,8 @@ from sqlalchemy.schema import Table
 from sqlalchemy.schema import MetaData
 
 import datetime
+import hashlib
+import copy
 
 
 DEFAULT_METADATA = {
@@ -38,7 +40,7 @@ class DSMTable:
 
         self.primary_key_names = [key.name for key in table.primary_key]
 
-        self.columns = set()
+        self.columns = {}
         self.cols_to_add = []
         self.cols_to_drop = []
         
@@ -53,19 +55,19 @@ class DSMTable:
         """
         make metadata for columns already in database and return the metadata dictionary
         """
-        self.column_metadata = {}
         datatypes = [column_datatypes.INTEGER, column_datatypes.FLOAT, column_datatypes.DECIMAL, column_datatypes.DOUBLE, column_datatypes.SMALLINT, column_datatypes.MEDIUMINT]
         # categorical = self.get_categorical()
         # if len(categorical) > 0:
         #     pdb.set_trace()
 
         for col in self.table.c:
-            add.update({
-                'numeric' : type(col['type']) in datatypes and not (col['primary_key'] or col['foreign_key']),
-                # 'categorical' : col['name'] in categorical
+            col = DSMColumn(col, table=self)
+
+            col.update_metadata({
+                'numeric' : type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key),
             })
 
-            self.column_metadata[col['name']] = add
+            self.columns[col.name] = col
 
 
     #############################
@@ -77,8 +79,7 @@ class DSMTable:
 
         todo: suport where to add it
         """
-        self.column_metadata[column_name] = metadata
-        self.cols_to_add.append((column_name, column_type))
+        self.cols_to_add.append((column_name, column_type, metadata))
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
     
@@ -93,14 +94,14 @@ class DSMTable:
     def flush_columns(self, drop_if_exists=True):
         # print self.cols_to_drop, self.cols_to_add
         #first, check which of cols_to_add need to be dropped first
-        for (name, col_type) in self.cols_to_add:
+        for (name, col_type, metadata) in self.cols_to_add:
             if drop_if_exists and self.has_column(name):
                 self.drop_column(name)
 
         #second, flush columns that need to be dropped
         values = []
         for name in self.cols_to_drop:
-            self.column_metadata[name]['dropped'] = True
+            del self.columns[name]
             values.append("DROP `%s`" % (name))
         if len(values) > 0:
             values = ", ".join(values)
@@ -116,9 +117,9 @@ class DSMTable:
         
         #third, flush columns that need to be added
         values = []
-        for (name, col_type) in self.cols_to_add:
-            self.column_metadata[name]['dropped'] = False
-            self.column_metadata[name]['flushed'] = True
+        new_col_metadata = {}
+        for (name, col_type, metadata) in self.cols_to_add:
+            new_col_metadata[name] = metadata
             values.append("ADD COLUMN `%s` %s" % (name, col_type))
         if len(values) > 0:
             values = ", ".join(values)
@@ -130,11 +131,15 @@ class DSMTable:
             self.cols_to_add = []
 
         #reflect table again to have update columns
-        # print self.table.name, 'reflect'
-        new_metadata = MetaData(bind=self.engine)
-        self.table = Table(self.table.name, new_metadata, autoload=True, autoload_with=self.engine)
-        # print [c.name for c in self.table.c]
-        # print [c['name'] for c in self.get_column_info()]
+        # TODO check to make sure old column reference still work
+        self.table = Table(self.table.name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
+        
+        for c in self.table.c:
+            if c.name not in self.columns:
+                    # pdb.set_trace()
+                    col = DSMColumn(c, self, metadata=new_col_metadata[c.name])
+                    self.columns[col.name] = col
+
 
 
     def to_csv(self, filename):
@@ -143,7 +148,7 @@ class DSMTable:
 
         note: meta data is not saved
         """
-        column_names = [c['name'] for c in self.get_column_info()]
+        column_names = [c.name for c in self.get_column_info()]
 
         header = ','.join([("'%s'"%c) for c in column_names])
         columns = ','.join([("`%s`"%c) for c in column_names])
@@ -172,24 +177,14 @@ class DSMTable:
 
         """
         cols = []
-        for c in self.table.columns:
-            if ignore_relationships and c.primary_key:
+        # pdb.set_trace()
+        for col in self.columns.values():
+            if ignore_relationships and col.primary_key:
                 continue
 
-            if ignore_relationships and len(c.foreign_keys)>0:
+            if ignore_relationships and col.has_foreign_key:
                 continue
 
-            col = {
-                'column' : c,
-                'name' : c.name,
-                'fullname' : prefix + c.name,
-                'unique_name': self.table.name + '.' + c.name,
-                'table' : self,
-                'type' : c.type,
-                'primary_key' : c.primary_key,
-                'foreign_key' : len(c.foreign_keys)>0,
-                'metadata' : self.column_metadata.get(c.name, {}),
-            }
             if set_trace:    
                 pdb.set_trace()
 
@@ -209,20 +204,19 @@ class DSMTable:
         """
         if type(datatypes) != list:
             datatypes = [datatypes]
-        return [c for c in self.get_column_info(**kwargs) if type(c['type']) in datatypes]
+        return [c for c in self.get_column_info(**kwargs) if type(c.type) in datatypes]
 
     def get_numeric_columns(self, **kwargs):
         """
         gets columns that are numeric as specified by metada
         """
-        return [c for c in self.get_column_info(**kwargs) if c['metadata']['numeric']]
+        return [c for c in self.get_column_info(**kwargs) if c.metadata['numeric']]
     
     def has_column(self, name):
-        return name in [c.name for c in self.table.c]
+        return name in self.columns
 
     def get_categorical(self, max_proportion_unique=.3, min_proportion_unique=0, max_num_unique=10):
         cols = self.get_column_info()
-        column_names = [c['name'] for c in cols]
         counts = self.get_num_distinct(cols)
         
         qry = """
@@ -233,13 +227,21 @@ class DSMTable:
         if total == 0:
             return set([])
 
-        return set([column_names[i] for i, count in enumerate(counts) if count>1 and count/total <= max_proportion_unique and count/total > min_proportion_unique and count<max_num_unique and len(self.column_metadata[column_names[i]]['path']) <= 1])
+        cat_cols = []
+        for col, count in counts:
+            if ( max_num_unique > count > 1 and
+                 max_proportion_unique <= count/total < min_proportion_unique and
+                 len(col.metadata['path']) <= 1 ):
+
+                cat_cols.append(col)
+
+        return cat_cols
 
     def get_num_distinct(self, cols):
         """
         returns number of distinct values for each column in cols. returns in same order as cols_to_drop
         """
-        column_names = [c['name'] for c in cols]
+        column_names = [c.name for c in cols]
         SELECT = ','.join(["count(distinct(`%s`))"%c for c in column_names])
 
         qry = """
@@ -248,18 +250,70 @@ class DSMTable:
 
         counts = self.engine.execute(qry).fetchall()[0]
         
-        return counts
+        return zip(cols,counts)
 
-    def get_distinct_vals(self, col_name):
+    def get_rows(self, cols):
+        """
+        return rows with values for the columns specificed by col
+        """
+        column_names = [c.name for c in cols]
+
+        SELECT = ','.join([("`%s`"%c) for c in column_names])
+
+        pk = self.get_column_info(match_func= lambda x: x.primary_key, first=True)
+
+        qry = """
+        SELECT {SELECT} from `{table}` ORDER BY `{primary_key}`
+        """.format(SELECT=SELECT, table=self.table.name, primary_key=pk.name)
+        rows = self.engine.execute(qry)
+
+        return self.engine.execute(qry)
+
+
+    def get_rows_as_dict(self, cols):
+        """
+        return rows with values for the columns specificed by col
+        """
+        rows = self.get_rows(cols)
+        rows = [dict(r) for r in rows.fetchall()]
+        return rows
+
+
+class DSMColumn():
+    def __init__(self, column, table, metadata=None):
+        self.table = table
+        self.column = column
+        self.name = column.name
+        self.hashed_name = hashlib.sha224(column.name).hexdigest()
+        self.unique_name =  self.table.table.name + '.' + self.name
+        self.type = column.type
+        self.primary_key = self.column.primary_key
+        self.has_foreign_key = len(column.foreign_keys)>0
+        
+        self.metadata = metadata
+        if not metadata:
+            self.metadata = dict(DEFAULT_METADATA)
+
+    def update_metadata(self, update):
+        self.metadata.update(update)
+
+    def copy_metadata(self):
+        """
+        returns copy of the metadata object for this column_metadata
+        """
+        return dict(self.metadata)
+
+
+    def get_distinct_vals(self):
         #try to get cached distinct_vals
-        if 'distinct_vals' in self.column_metadata[col_name]:
-            return self.column_metadata[col_name]['distinct_vals']
+        if 'distinct_vals' in self.metadata:
+            return self.metadata['distinct_vals']
 
         qry = """
         SELECT distinct(`{col_name}`) from `{table}`
-        """.format(col_name=col_name, table=self.table.name)
+        """.format(col_name=self.name, table=self.table.table.name)
 
-        distinct = self.engine.execute(qry).fetchall()
+        distinct = self.table.engine.execute(qry).fetchall()
 
         vals = []
         for d in distinct:
@@ -282,59 +336,14 @@ class DSMTable:
             vals.append(d)
 
         #save distinct vals to cache
-        self.column_metadata[col_name]['distinct_vals'] = vals
+        self.metadata['distinct_vals'] = vals
         
         return vals      
 
-    def get_max_col_val(self, col):
-        qry = "SELECT MAX({col_name}) from {table}".format(col_name=col['name'], table=col.table.table.name)
-        result = self.col.table.engine.execute(qry).fetchall()
+    def get_max_col_val(self):
+        qry = "SELECT MAX(`{col_name}`) from `{table}`".format(col_name=self.name, table=self.table.table.name)
+        result = self.table.engine.execute(qry).fetchall()
         return result[0][0]
 
-
-
-
-
-    def get_rows(self, cols):
-        """
-        return rows with values for the columns specificed by col
-        """
-        column_names = [c['name'] for c in cols]
-
-        SELECT = ','.join([("`%s`"%c) for c in column_names])
-
-        pk = self.get_column_info(match_func= lambda x: x['primary_key'], first=True)
-
-        qry = """
-        SELECT {SELECT} from `{table}` ORDER BY `{primary_key}`
-        """.format(SELECT=SELECT, table=self.table.name, primary_key=pk['name'])
-        rows = self.engine.execute(qry)
-
-        return self.engine.execute(qry)
-
-
-    def get_rows_as_dict(self, cols):
-        """
-        return rows with values for the columns specificed by col
-        """
-        rows = self.get_rows(cols)
-        rows = [dict(r) for r in rows.fetchall()]
-        return rows
-
-
-class Column():
-    def __init__(self, column, metadata=None):
-        self.column = column
-        self.name = column.name
-        self.table : column.table
-        self.unique_name =  self.table.name + '.' + self.name,
-        self.type = column.type,
-        self.primary_key = self.column.primary_key,
-        self.foreign_key = len(c.foreign_keys)>0
-        
-        self.metadata = metadata
-        if not metadata:
-            self.metadata = dict(DEFAULT_METADATA)
-
-    def update_metadata(self, update):
-        
+    def prefix_name(self, prefix):
+        return prefix + self.name
