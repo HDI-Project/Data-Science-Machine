@@ -141,32 +141,6 @@ class DSMTable:
                     self.columns[col.name] = col
 
 
-
-    def to_csv(self, filename):
-        """
-        saves table as csv to filename
-
-        note: meta data is not saved
-        """
-        column_names = [c.name for c in self.get_column_info()]
-
-        header = ','.join([("'%s'"%c) for c in column_names])
-        columns = ','.join([("`%s`"%c) for c in column_names])
-
-        qry = """
-        (SELECT {header})
-        UNION 
-        (SELECT {columns}
-        FROM `{table}`
-        INTO OUTFILE '{filename}'
-        FIELDS ENCLOSED BY '"' TERMINATED BY ';' ESCAPED BY '"'
-        LINES TERMINATED BY '\r\n');
-        """ .format(header=header, columns=columns, table=self.table.name, filename=filename)
-
-        self.engine.execute(qry)
-
-
-
     ###############################
     # Table info helper functions #
     ###############################
@@ -283,8 +257,8 @@ class DSMColumn():
     def __init__(self, column, table, metadata=None):
         self.table = table
         self.column = column
+        # self.name = hashlib.sha224(column.name).hexdigest()
         self.name = column.name
-        self.hashed_name = hashlib.sha224(column.name).hexdigest()
         self.unique_name =  self.table.table.name + '.' + self.name
         self.type = column.type
         self.primary_key = self.column.primary_key

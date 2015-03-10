@@ -109,6 +109,9 @@ class AggFuncMySQL(AggFuncBase):
                 'categorical' : False
             })
 
+            if self.filter_obj and self.filter_obj.interval_num != None:
+                new_metadata['interval_num'] = self.filter_obj.interval_num
+
             select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=self.func.upper(),col_name=col.name, new_col=new_col)
             agg_select.append(select)
 
@@ -211,6 +214,9 @@ class AggCount(AggFuncBase):
             'categorical' : False
         })
 
+        if self.filter_obj and self.filter_obj.interval_num != None :
+            new_metadata['interval_num'] = self.filter_obj.interval_num
+
         table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata, flush=True)
 
         params = {
@@ -249,10 +255,10 @@ def make_interval_filters(col, n_intervals, delta):
 
     max_val = col.get_max_col_val()
 
-    for n in xrange(n_intervals):
+    for n in xrange(n_intervals-1,-1, -1):
         new_max = max_val - delta
         interval_range = [(col, "<=", date_to_str(max_val)), (col, ">", date_to_str(new_max))]
-        f_obj = FilterObject(interval_range, label="int=%d"%n)
+        f_obj = FilterObject(interval_range, label="int=%d"%n, interval_num=n)
         interval_filters.append(f_obj)
         max_val = new_max
 

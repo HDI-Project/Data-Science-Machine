@@ -5,10 +5,11 @@ class FilterObject(object):
     to_where_statement() is the key function to use to generate the code for a query
 
     """
-    def __init__(self, filters, label=None):
+    def __init__(self, filters, label=None, interval_num=None):
         self.filters = filters
         self.filtered_cols = [c[0] for c in filters]
         self.label = label
+        self.interval_num = interval_num
 
     def to_where_statement(self):
         stmt = "WHERE "
@@ -51,4 +52,5 @@ class FilterObject(object):
     def AND(self, f_obj):
         filters = self.filters + f_obj.filters
         label = self.get_label() + "_AND_" + f_obj.get_label()
+        interval_num = max(self.interval_num, f_obj.interval_num)
         return FilterObject(filters, label)
