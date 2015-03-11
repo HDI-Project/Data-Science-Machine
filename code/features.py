@@ -75,6 +75,7 @@ def make_agg_features(db, table, caller, depth):
             agg_functions.apply_funcs(db,fk)
 
 
+    #todo check if necessary
     table.has_agg_features = True
 
 
@@ -101,6 +102,8 @@ def make_flat_features(db, table, caller, depth):
         return
 
     for fk in table.table.foreign_keys:
+        # if not caller:
+        #     pdb.set_trace()
         foreign_table = db.tables[fk.column.table.name]
         if foreign_table in [table, caller]:
             continue
@@ -131,14 +134,14 @@ def make_flat_features(db, table, caller, depth):
 
             new_metadata.update({ 
                 'path' : new_metadata['path'] + [path_add],
-                'numeric' : False,
-                'categorical' : True
+                'categorical' : True,
+                'real_name' : prefix + col.metadata['real_name']
             })
 
-            table.create_column(col.prefix_name(prefix), col.type.compile(), metadata=new_metadata)
+            new_col_name = table.create_column(col.type.compile(), metadata=new_metadata)
             set_values.append(
                 "a.`%s`=b.`%s`" %
-                (col.prefix_name(prefix), col.name)
+                (new_col_name, col.name)
             )
 
         table.flush_columns()
@@ -182,7 +185,7 @@ def convert_datetime_weekday(table):
         if not row_funcs_is_allowed(col, 'convert_datetime_weekday'):
             continue
 
-        new_col = "[{col_name}]_weekday".format(col_name=col.name)
+        new_col = "[{col_name}]_weekday".format(col_name=col.metadata['real_name'])
         new_metadata = col.copy_metadata()
         
         path_add = {
@@ -194,20 +197,21 @@ def convert_datetime_weekday(table):
         new_metadata.update({ 
             'path' : new_metadata['path'] + [path_add],
             'numeric' : False,
-            'categorical' : True
+            'categorical' : True,
+            "real_name" : new_col
         })
 
-        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata,flush=True)
+        new_col_name = table.create_column(column_datatypes.INTEGER.__visit_name__, metadata=new_metadata,flush=True)
         table.engine.execute(
             """
             UPDATE `%s` t
             set `%s` = WEEKDAY(t.`%s`)
-            """ % (table.table.name, new_col, col.name)
+            """ % (table.table.name, new_col_name, col.name)
         ) #very bad, fix how parameters are substituted in
         
 def add_ntiles(table, n=10):
     for col in table.get_numeric_columns(ignore_relationships=True):
-        new_col = "[{col_name}]_decile".format(col_name=col.name)
+        new_col = "[{col_name}]_decile".format(col_name=col.metadata['real_name'])
         new_metadata = col.copy_metadata()
         path_add = {
                     'base_column': col,
@@ -218,6 +222,7 @@ def add_ntiles(table, n=10):
         new_metadata.update({ 
             'path' : new_metadata['path'] + [path_add],
             'numeric' : False,
+            "real_name" : new_col
             # 'excluded_agg_funcs' : set(['sum']),
             # 'excluded_row_funcs' : set(['add_ntiles']),
         })
@@ -225,7 +230,7 @@ def add_ntiles(table, n=10):
         if len(new_metadata['path']) > MAX_FUNC_TO_APPLY:
             continue
 
-        table.create_column(new_col, column_datatypes.INTEGER.__visit_name__, metadata=new_metadata, flush=True)
+        new_col_name = table.create_column(column_datatypes.INTEGER.__visit_name__, metadata=new_metadata, flush=True)
         select_pk = ", ".join(["`%s`"%pk for pk in table.primary_key_names])
 
         where_pk = ""
@@ -254,16 +259,21 @@ def add_ntiles(table, n=10):
                 ) as ct
             WHERE {where_pk}
         );
-        """.format(table=table.table.name, new_col=new_col, n=n, col_name=col.name, select_pk=select_pk, where_pk=where_pk)
+        """.format(table=table.table.name, new_col=new_col_name, n=n, col_name=col.name, select_pk=select_pk, where_pk=where_pk)
         table.engine.execute(qry) #very bad, fix how parameters are substituted in
 
 
 if __name__ == "__main__":
+    import debug
+
     os.system("mysql -t < ../Northwind.MySQL5.sql")
 
     database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
 
     # db.tables['Orders'].to_csv('/tmp/orders.csv')
-    make_all_features(db, db.tables['Orders'])
+    table = db.tables['Products']
+    make_all_features(db, table)
+    debug.print_cols_names(table)
+    # debug.print_cols_names(db.tables['Orders'])
 #beaumont

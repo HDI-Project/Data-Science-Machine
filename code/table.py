@@ -48,6 +48,8 @@ class DSMTable:
         self.has_agg_features = False
         self.has_flat_features = False
 
+        self.num_added_cols = 0
+
         self.init_columns()
 
 
@@ -65,23 +67,32 @@ class DSMTable:
 
             col.update_metadata({
                 'numeric' : type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key),
+                'real_name' : col.name
             })
 
             self.columns[col.name] = col
+
+    def make_column_name(self):
+        name = str(self.num_added_cols)
+        self.num_added_cols +=1
+        return name
 
 
     #############################
     # Database operations       #
     #############################
-    def create_column(self, column_name, column_type, metadata={},flush=False, drop_if_exists=True):
+    def create_column(self, column_type, metadata={},flush=False, drop_if_exists=True):
         """
         add column with name column_name of type column_type to this table. if column exists, drop first
 
         todo: suport where to add it
         """
+        column_name = self.make_column_name()
         self.cols_to_add.append((column_name, column_type, metadata))
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
+
+        return column_name
     
     def drop_column(self, column_name, flush=False):
         """
@@ -257,7 +268,6 @@ class DSMColumn():
     def __init__(self, column, table, metadata=None):
         self.table = table
         self.column = column
-        # self.name = hashlib.sha224(column.name).hexdigest()
         self.name = column.name
         self.unique_name =  self.table.table.name + '.' + self.name
         self.type = column.type

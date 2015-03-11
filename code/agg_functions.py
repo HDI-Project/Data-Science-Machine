@@ -7,7 +7,8 @@ import pdb
 class AggFuncBase(object):
     name = "AggFuncBase"
     disallowed = set([])
-    MAX_PATH_LENGTH = 1
+    MAX_PATH_LENGTH = 4
+
 
     def __init__(self, db, filter_obj=None):
         self.db = db
@@ -24,6 +25,8 @@ class AggFuncBase(object):
         returns true if this agg function can be applied to this col. otherwise returns false
         todo: don't allow any function on columns that are all the same value
         """
+        
+
         if len(col.metadata['path']) > 0:
             last = col.metadata['path'][-1]
             if (last['feature_type'], last['feature_type_func']) in self.disallowed:
@@ -34,6 +37,7 @@ class AggFuncBase(object):
             #     return False
 
         if len(col.metadata['path']) >= self.MAX_PATH_LENGTH:
+            print 'max path', len(col.metadata['path'])
             return False
 
         #only use columns with more than 1 distinct value
@@ -60,6 +64,10 @@ class AggFuncMySQL(AggFuncBase):
         """
         returns true if this agg function can be applied to this col. otherwise returns false
         """
+        # if len(col.metadata['path']) >= 1:
+        #     if target_table.table.name ==  "Products":
+        #         pdb.set_trace()
+
         if not super(AggFuncMySQL, self).col_allowed(col, target_table=target_table):
             return False
 
@@ -84,16 +92,18 @@ class AggFuncMySQL(AggFuncBase):
             new_features = True
 
             #if the fk is a circular references and has a special column name, keep it. otherwise use the name of the table
+            #todo: check this under new column name scheme
             if fk.column.table == fk.parent.table and fk.parent.name != fk.column.name:
                 fk_name = fk.parent.name
             else:
                 fk_name = fk.parent.table.name
 
             if self.filter_obj :
-                new_col = "[{func}.{fk_name}.{col_name}_{filter_label}]".format(func=self.func,col_name=col.name, fk_name=fk_name, filter_label=self.filter_obj.get_label())
+                new_col = "[{func}.{fk_name}.{col_name}_{filter_label}]".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name, filter_label=self.filter_obj.get_label())
             else:
-                new_col = "[{func}.{fk_name}.{col_name}]".format(func=self.func,col_name=col.name, fk_name=fk_name)
+                new_col = "[{func}.{fk_name}.{col_name}]".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name)
             
+
             new_metadata = col.copy_metadata()
 
             path_add = {
@@ -106,20 +116,22 @@ class AggFuncMySQL(AggFuncBase):
             new_metadata.update({
                 'path' : new_metadata['path'] + [path_add],
                 'numeric' : True,
-                'categorical' : False
+                'categorical' : False,
+                'real_name' : new_col
             })
+            
+            new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
 
             if self.filter_obj and self.filter_obj.interval_num != None:
                 new_metadata['interval_num'] = self.filter_obj.interval_num
 
-            select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=self.func.upper(),col_name=col.name, new_col=new_col)
+            select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=self.func.upper(),col_name=col.name, new_col=new_col_name)
             agg_select.append(select)
 
-            value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col)
+            value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col_name)
             set_values.append(value)
 
             # print "add col", table.table.name, new_col
-            table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
 
         if new_features:
             table.flush_columns()
@@ -176,6 +188,7 @@ class AggCount(AggFuncBase):
         """
         returns true if this agg function can be applied to this col. otherwise returns false
         """
+
         if not super(AggFuncMySQL, self).col_allowed(col, target_table=target_table):
             return False
         return True
@@ -211,20 +224,21 @@ class AggCount(AggFuncBase):
         new_metadata.update({
             'path' : new_metadata['path'] + [path_add],
             'numeric' : True,
-            'categorical' : False
+            'categorical' : False,
+            'real_name' :new_col
         })
 
         if self.filter_obj and self.filter_obj.interval_num != None :
             new_metadata['interval_num'] = self.filter_obj.interval_num
 
-        table.create_column(new_col, column_datatypes.FLOAT.__visit_name__, metadata=new_metadata, flush=True)
+        new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata, flush=True)
 
         params = {
             "fk_select" : "`rt`.`%s`" % fk.parent.name,
             "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
             "related_table" : related_table.table.name,
             "table" : table.table.name,
-            'new_col' : new_col,
+            'new_col' : new_col_name,
             'where_stmt' : self.make_where_stmt()
         }
 
@@ -252,7 +266,7 @@ def make_interval_filters(col, n_intervals, delta):
     # related_table = coldb.tables[fk.parent.table.name]
     interval_filters = []
 
-
+    print col
     max_val = col.get_max_col_val()
 
     for n in xrange(n_intervals-1,-1, -1):

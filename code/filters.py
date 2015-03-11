@@ -5,6 +5,7 @@ class FilterObject(object):
     to_where_statement() is the key function to use to generate the code for a query
 
     """
+    MAX_FILTERS = 3
     def __init__(self, filters, label=None, interval_num=None):
         self.filters = filters
         self.filtered_cols = [c[0] for c in filters]
@@ -44,7 +45,7 @@ class FilterObject(object):
             if p.get('filter', None):
                 count_filters += 1
 
-            if count_filters >= 1:
+            if count_filters >= self.MAX_FILTERS:
                 return False
 
         return True
