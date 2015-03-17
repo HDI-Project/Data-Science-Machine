@@ -31,26 +31,6 @@ def make_all_features(db, table, caller=None, depth=0):
     make_agg_features(db, table, caller, depth)
     make_row_features(db, table, caller, depth)
     make_flat_features(db, table, caller, depth)
-    # prune_features(db, table, caller, depth)
-
-#delete once funcionality is added to allow_agg_funcs
-# def prune_features(db, table, caller, depth):
-#     caller_name = 'no caller'
-#     if caller:
-#         caller_name = caller.table.name
-
-#     if caller == table:
-#         return
-
-#     print "*"*depth +  'removing features %s, caller= %s' % (table.table.name, caller_name)
-#     cols = table.get_column_info()
-#     if len(cols) == 0:
-#         return
-#     counts = np.array(table.get_num_distinct(cols), dtype=np.float)
-#     for i in np.where(counts==1)[0]:
-#         print "drop", table.table.name, cols[i]['name']
-#         table.drop_column(cols[i]['name'])
-#     table.flush_columns()
 
 
 #############################
@@ -266,14 +246,14 @@ def add_ntiles(table, n=10):
 if __name__ == "__main__":
     import debug
 
-    # os.system("mysql -t < ../Northwind.MySQL5.sql")
-    os.system("mysql -t < ../allstate/allstate.sql")
+    os.system("mysql -t < ../Northwind.MySQL5.sql")
+    # os.system("mysql -t < ../allstate/allstate.sql")
 
-    database_name = 'allstate'
+    database_name = 'northwind'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
 
     # db.tables['Orders'].to_csv('/tmp/orders.csv')
-    table = db.tables['Customers']
+    table = db.tables['Products']
     make_all_features(db, table)
     debug.print_cols_names(table)
     # debug.print_cols_names(db.tables['Orders'])

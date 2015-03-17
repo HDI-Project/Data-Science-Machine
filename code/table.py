@@ -1,6 +1,5 @@
 import pdb
 from sqlalchemy.orm import sessionmaker
-from compile_query import compile_query
 from sqlalchemy import text
 
 import sqlalchemy.dialects.mysql.base as column_datatypes
@@ -8,17 +7,6 @@ from sqlalchemy.schema import Table
 
 from sqlalchemy.schema import MetaData
 from column import DSMColumn
-import datetime
-import hashlib
-import copy
-
-
-DEFAULT_METADATA = {
-    'path' : [], 
-    'numeric' : False,
-    'categorical' : False
-}
-
 
 class DSMTable:
     def __init__(self, table, db):

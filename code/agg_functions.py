@@ -7,7 +7,7 @@ import pdb
 class AggFuncBase(object):
     name = "AggFuncBase"
     disallowed = set([])
-    MAX_PATH_LENGTH = 4
+    MAX_PATH_LENGTH = 3
 
 
     def __init__(self, db, filter_obj=None):

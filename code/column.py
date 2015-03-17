@@ -1,3 +1,12 @@
+import datetime
+
+
+DEFAULT_METADATA = {
+    'path' : [], 
+    'numeric' : False,
+    'categorical' : False
+}
+
 class DSMColumn():
     def __init__(self, column, table, metadata=None):
         self.table = table
