@@ -266,13 +266,14 @@ def add_ntiles(table, n=10):
 if __name__ == "__main__":
     import debug
 
-    os.system("mysql -t < ../Northwind.MySQL5.sql")
+    # os.system("mysql -t < ../Northwind.MySQL5.sql")
+    os.system("mysql -t < ../allstate/allstate.sql")
 
-    database_name = 'northwind'
+    database_name = 'allstate'
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
 
     # db.tables['Orders'].to_csv('/tmp/orders.csv')
-    table = db.tables['Products']
+    table = db.tables['Customers']
     make_all_features(db, table)
     debug.print_cols_names(table)
     # debug.print_cols_names(db.tables['Orders'])

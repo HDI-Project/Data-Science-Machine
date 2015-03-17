@@ -10,8 +10,6 @@
 
 -clustering? eg product recommendation
 
-- create column object to a class
-
 - handle circular case for agg functions
 
 - think about cases where a created variable may be categorical

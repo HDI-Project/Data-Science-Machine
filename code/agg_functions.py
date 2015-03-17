@@ -32,7 +32,7 @@ class AggFuncBase(object):
             if (last['feature_type'], last['feature_type_func']) in self.disallowed:
                 return False
 
-            #not sure this matters anymore 
+            #todo: not sure this matters anymore 
             # if last['base_column']['table'] == target_table:
             #     return False
 
@@ -320,6 +320,6 @@ def apply_funcs(db, fk, filter_obj=None):
             func(db, f_obj).apply(fk) #apply without any filtering
         
 
-
+#agg oldest
 def get_functions():
     return [AggCount, AggMax, AggSum, AggStd, AggMin]
