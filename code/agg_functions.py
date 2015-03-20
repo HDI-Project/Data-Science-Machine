@@ -1,24 +1,13 @@
 import sqlalchemy.dialects.mysql.base as column_datatypes
 from datetime import timedelta
 from filters import FilterObject
+from feature import FeatureBase
 
 import pdb
 
-class AggFuncBase(object):
+class AggFuncBase(FeatureBase):
     name = "AggFuncBase"
     disallowed = set([])
-    MAX_PATH_LENGTH = 3
-
-
-    def __init__(self, db, filter_obj=None):
-        self.db = db
-        self.filter_obj = filter_obj
-
-    def make_where_stmt(self):
-        where_stmt = ""
-        if self.filter_obj:
-            where_stmt = self.filter_obj.to_where_statement()
-        return where_stmt
 
     def col_allowed(self, col, target_table=None):
         """

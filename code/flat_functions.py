@@ -1,6 +1,17 @@
-parent_table = db.tables[fk.column.table.name]
-        if parent_table in [table, caller]:
-            continue
+from feature import FeatureBase
+import inflect
+import column
+
+
+p = inflect.engine()
+
+class FlatFeature(FeatureBase):
+    def apply(self,fk):
+        """
+        brings in all flat features according to the foreign key provided
+        """
+        table = self.db.tables[fk.parent.table.name]
+        parent_table = self.db.tables[fk.column.table.name]
 
         #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
         if fk.parent.name != fk.column.name:
@@ -35,7 +46,7 @@ parent_table = db.tables[fk.column.table.name]
 
             table_name, new_col_name = table.create_column(col.type.compile(), metadata=new_metadata)
 
-    
+
             if last_col == None:
                 last_col = col
 
@@ -49,7 +60,7 @@ parent_table = db.tables[fk.column.table.name]
                 table.flush_columns()
                 table.engine.execute(qry)
                 set_values=[]
-    
+
             set_values.append((table_name, new_col_name, col.column.table.name, col.name))
 
             last_col = col
