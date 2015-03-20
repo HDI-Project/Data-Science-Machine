@@ -7,6 +7,7 @@ import numpy as np
 import inflect
 import agg_functions
 import datetime
+import column
 #############################
 # Table feature functions  #
 #############################
@@ -20,16 +21,16 @@ MAX_FUNC_TO_APPLY = 2
 def make_all_features(db, table, caller=None, depth=0):
     caller_name = 'no caller'
     if caller:
-        caller_name = caller.table.name
-    print "*"*depth + 'making all features %s, caller= %s' % (table.table.name, caller_name)
+        caller_name = caller.name
+    print "*"*depth + 'making all features %s, caller= %s' % (table.name, caller_name)
 
     for related in db.get_related_tables(table):
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
             make_all_features(db, related, caller=table, depth=depth+1)
 
-    make_agg_features(db, table, caller, depth)
-    make_row_features(db, table, caller, depth)
+    # make_agg_features(db, table, caller, depth)
+    # make_row_features(db, table, caller, depth)
     make_flat_features(db, table, caller, depth)
 
 
@@ -41,11 +42,11 @@ def make_all_features(db, table, caller=None, depth=0):
 def make_agg_features(db, table, caller, depth):
     caller_name = 'no caller'
     if caller:
-        caller_name = caller.table.name
-    print "*"*depth +  'making agg features %s, caller= %s' % (table.table.name, caller_name)
+        caller_name = caller.name
+    print "*"*depth +  'making agg features %s, caller= %s' % (table.name, caller_name)
 
     if table.has_agg_features:
-        print "*"*depth +  'skipping agg %s' % (table.table.name)
+        print "*"*depth +  'skipping agg %s' % (table.name)
         return
     
     for fk in db.get_related_fks(table):
@@ -73,35 +74,34 @@ def make_flat_features(db, table, caller, depth):
     """
     caller_name = 'no caller'
     if caller:
-        caller_name = caller.table.name
-    print "*"*depth +  'making flat features %s, caller= %s' % (table.table.name, caller_name)
-    
+        caller_name = caller.name
+    print "*"*depth +  'making flat features %s, caller= %s' % (table.name, caller_name)
 
     if table.has_flat_features:
-        print "*"*depth +  'skipping flat %s' % (table.table.name)
+        print "*"*depth +  'skipping flat %s' % (table.name)
         return
 
-    for fk in table.table.foreign_keys:
-        # if not caller:
-        #     pdb.set_trace()
-        foreign_table = db.tables[fk.column.table.name]
-        if foreign_table in [table, caller]:
+    for fk in table.base_table.foreign_keys:
+        flat_functions.apply(fk)
+        parent_table = db.tables[fk.column.table.name]
+        if parent_table in [table, caller]:
             continue
 
-        #add columns from foreign table
         #if the fk has a special column name in parent table, keep it. otherwise use the name of the foreign table
         if fk.parent.name != fk.column.name:
             prefix = fk.parent.name
         else:
-            prefix = fk.column.table.name
-            singular = p.singular_noun(fk.column.table.name)
+            prefix = fk.column.name
+            singular = p.singular_noun(fk.column.name)
             if singular:
                 prefix = singular
 
         prefix += "."
 
-        to_add = foreign_table.get_column_info(ignore_relationships=True)
-        # pdb.set_trace()
+        to_add = parent_table.get_column_info(ignore_relationships=True)
+        last_col = None
+        last_target_table_name = None
+        last_fk = None
         set_values = []
         for col in to_add:
             new_metadata = col.copy_metadata()
@@ -118,26 +118,36 @@ def make_flat_features(db, table, caller, depth):
                 'real_name' : prefix + col.metadata['real_name']
             })
 
-            new_col_name = table.create_column(col.type.compile(), metadata=new_metadata)
-            set_values.append(
-                "a.`%s`=b.`%s`" %
-                (new_col_name, col.name)
-            )
+            table_name, new_col_name = table.create_column(col.type.compile(), metadata=new_metadata)
 
-        table.flush_columns()
+    
+            if last_col == None:
+                last_col = col
 
-        #add column values
-        set_value = ','.join(set_values)
-        where = "a.`%s`=b.`%s`" % (fk.parent.name, fk.column.name)
-        qry = """
-        UPDATE `{table}` a, `{foreign_table}` b
-        SET {set}
-        WHERE {where}
-        """.format(table=table.table.name, foreign_table=foreign_table.table.name, set=set_value, where=where)
-        table.engine.execute(qry)
+            if last_target_table_name == None:
+                last_target_table_name = table_name
+
+            # print last_col.column.table, col.column.table, last_target_table_name, table_name, last_col.column.table != col.column.table or last_tar
+            #if this col has different source or target, update database 
+            if last_col.column.table.name != col.column.table.name or last_target_table_name != table_name:
+                qry = column.make_set_qry(set_values, fk.parent.name, fk.column.name)
+                table.flush_columns()
+                table.engine.execute(qry)
+                set_values=[]
+    
+            set_values.append((table_name, new_col_name, col.column.table.name, col.name))
+
+            last_col = col
+            last_target_table_name == table_name
+            last_fk = fk
+
+        if set_values != []:   
+            qry = column.make_set_qry(set_values, fk.parent.name, fk.column.name)
+            table.flush_columns()
+            table.engine.execute(qry)
 
     table.has_flat_features = True
-    #print "*"*depth +  'done making flat features %s' % (table.table.name)
+    #print "*"*depth +  'done making flat features %s' % (table.name)
 
 
 #############################
@@ -151,14 +161,14 @@ def row_funcs_is_allowed(col, func):
     return True
 
 def make_row_features(db, table, caller, depth):
-    print "*"*depth +  'making row features %s' % (table.table.name)
+    print "*"*depth +  'making row features %s' % (table.name)
     if not table.has_row_features:
         convert_datetime_weekday(table)
         # add_ntiles(table)
         table.has_row_features = True
-        #print "*"*depth +  'done row features %s' % (table.table.name)
+        #print "*"*depth +  'done row features %s' % (table.name)
     else:
-        print "*"*depth +  'skip row features %s' % (table.table.name)
+        print "*"*depth +  'skip row features %s' % (table.name)
 
 def convert_datetime_weekday(table):
     for col in table.get_columns_of_type([column_datatypes.DATETIME, column_datatypes.DATE], ignore_relationships=True):
@@ -186,7 +196,7 @@ def convert_datetime_weekday(table):
             """
             UPDATE `%s` t
             set `%s` = WEEKDAY(t.`%s`)
-            """ % (table.table.name, new_col_name, col.name)
+            """ % (table.name, new_col_name, col.name)
         ) #very bad, fix how parameters are substituted in
         
 def add_ntiles(table, n=10):
@@ -218,7 +228,7 @@ def add_ntiles(table, n=10):
         for pk in table.primary_key_names:
             if not first:
                 where_pk += " AND "
-            where_pk += "`%s` = `%s`.`%s`" % (pk, table.table.name, pk)
+            where_pk += "`%s` = `%s`.`%s`" % (pk, table.name, pk)
             first = False
 
         qry = """
@@ -239,7 +249,7 @@ def add_ntiles(table, n=10):
                 ) as ct
             WHERE {where_pk}
         );
-        """.format(table=table.table.name, new_col=new_col_name, n=n, col_name=col.name, select_pk=select_pk, where_pk=where_pk)
+        """.format(table=table.name, new_col=new_col_name, n=n, col_name=col.name, select_pk=select_pk, where_pk=where_pk)
         table.engine.execute(qry) #very bad, fix how parameters are substituted in
 
 
@@ -253,7 +263,7 @@ if __name__ == "__main__":
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
 
     # db.tables['Orders'].to_csv('/tmp/orders.csv')
-    table = db.tables['Products']
+    table = db.tables['Order Details']
     make_all_features(db, table)
     debug.print_cols_names(table)
     # debug.print_cols_names(db.tables['Orders'])

@@ -8,24 +8,33 @@ from sqlalchemy.schema import Table
 from sqlalchemy.schema import MetaData
 from column import DSMColumn
 
+from collections import defaultdict
+
 class DSMTable:
+    MAX_COLS_TABLE = 100
+
     def __init__(self, table, db):
         self.db = db
-        self.table = table
-        self.engine = self.table.bind
+        self.name = table.name
+        self.base_table = table
+        self.tables = {table.name: table}
+        self.engine = self.base_table.bind
         self.session = sessionmaker(bind=self.engine)()
 
         self.primary_key_names = [key.name for key in table.primary_key]
 
         self.columns = {}
-        self.cols_to_add = []
-        self.cols_to_drop = []
+        self.cols_to_add = defaultdict(list)
+        self.cols_to_drop = defaultdict(list)
         
         self.has_row_features = False
         self.has_agg_features = False
         self.has_flat_features = False
 
         self.num_added_cols = 0
+        self.num_added_tables = 0
+        self.table_col_counts = {}
+        self.curr_table = None
 
         self.init_columns()
 
@@ -39,8 +48,8 @@ class DSMTable:
         # if len(categorical) > 0:
         #     pdb.set_trace()
 
-        for col in self.table.c:
-            col = DSMColumn(col, table=self)
+        for col in self.base_table.c:
+            col = DSMColumn(col, dsm_table=self)
 
             col.update_metadata({
                 'numeric' : type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key),
@@ -49,10 +58,46 @@ class DSMTable:
 
             self.columns[col.name] = col
 
+    def make_new_table(self):
+        self.num_added_tables += 1
+        new_table_name = self.name + "_" + str(self.num_added_tables)
+
+        #todo t: check if temp table good
+        # qry = """
+        # CREATE table {new_table_name} as (select {select_pk} from {old_table})
+        # """.format(new_table_name=new_table_name, select_pk=",".join(self.primary_key_names), old_table=self.name)
+
+        qry = """
+        CREATE TABLE `{new_table_name}` LIKE `{old_table}`; 
+        """.format(new_table_name=new_table_name, old_table=self.name)
+        self.engine.execute(qry)
+
+        qry = """
+        INSERT `{new_table_name}` SELECT * FROM `{old_table}`;
+        """.format(new_table_name=new_table_name, old_table=self.name)
+        self.engine.execute(qry)
+
+        self.tables[new_table_name] = Table(new_table_name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
+        self.table_col_counts[new_table_name] = 0
+        return self.tables[new_table_name]
+
+
     def make_column_name(self):
         name = str(self.num_added_cols)
         self.num_added_cols +=1
         return name
+
+    def get_curr_table(self):
+        """
+        return the curr_table that columns should be added to
+        """
+        if (self.curr_table == None or
+           self.table_col_counts[self.curr_table.name] >= self.MAX_COLS_TABLE):
+
+            self.curr_table = self.make_new_table()
+
+        return self.curr_table
+
 
 
     #############################
@@ -65,68 +110,70 @@ class DSMTable:
         todo: suport where to add it
         """
         column_name = self.make_column_name()
-        self.cols_to_add.append((column_name, column_type, metadata))
+        table_name = self.get_curr_table().name
+        self.cols_to_add[table_name] += [(column_name, column_type, metadata)]
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
 
-        return column_name
+        return table_name,column_name
     
-    def drop_column(self, column_name, flush=False):
+    def drop_column(self, table_name, column_name, flush=False):
         """
         drop column with name column_name from this table
         """
-        self.cols_to_drop.append(column_name)
+        self.cols_to_drop[table_name] += [column_name]
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
 
     def flush_columns(self, drop_if_exists=True):
-        # print self.cols_to_drop, self.cols_to_add
         #first, check which of cols_to_add need to be dropped first
-        for (name, col_type, metadata) in self.cols_to_add:
-            if drop_if_exists and self.has_column(name):
-                self.drop_column(name)
+        for table_name in self.cols_to_add:
+            for (name, col_type, metadata) in self.cols_to_add[table_name]:
+                if drop_if_exists and self.has_column(name):
+                    self.drop_column(table, name)
 
         #second, flush columns that need to be dropped
-        values = []
-        for name in self.cols_to_drop:
-            del self.columns[name]
-            values.append("DROP `%s`" % (name))
-        if len(values) > 0:
-            values = ", ".join(values)
+        for table_name in self.cols_to_drop:
+            values = []
+            for name in self.cols_to_drop[table_name]:
+                del self.columns[name]
+                values.append("DROP `%s`" % (name))
+            if len(values) > 0:
+                values = ", ".join(values)
+                self.engine.execute(
+                    """
+                    ALTER TABLE `{table}`
+                    {cols_to_drop}
+                    """.format(table=table_name, cols_to_drop=values)
+                ) #very bad, fix how parameters are substituted in
 
-            self.engine.execute(
-                """
-                ALTER TABLE `{table}`
-                {cols_to_drop}
-                """.format(table=self.table.name, cols_to_drop=values)
-            ) #very bad, fix how parameters are substituted in
-
-            self.cols_to_drop = []
-        
+                self.cols_to_drop[table_name] = []
+            
         #third, flush columns that need to be added
-        values = []
-        new_col_metadata = {}
-        for (name, col_type, metadata) in self.cols_to_add:
-            new_col_metadata[name] = metadata
-            values.append("ADD COLUMN `%s` %s" % (name, col_type))
-        if len(values) > 0:
-            values = ", ".join(values)
-            qry = """
-                ALTER TABLE `{table}`
-                {cols_to_add}
-                """.format(table=self.table.name, cols_to_add=values)
-            self.engine.execute(qry) #very bad, fix how parameters are substituted in
-            self.cols_to_add = []
+        for table_name in self.cols_to_add:
+            values = []
+            new_col_metadata = {}
+            for (name, col_type, metadata) in self.cols_to_add[table_name]:
+                new_col_metadata[name] = metadata
+                values.append("ADD COLUMN `%s` %s" % (name, col_type))
 
-        #reflect table again to have update columns
-        # TODO check to make sure old column reference still work
-        self.table = Table(self.table.name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
-        
-        for c in self.table.c:
-            if c.name not in self.columns:
-                    # pdb.set_trace()
-                    col = DSMColumn(c, self, metadata=new_col_metadata[c.name])
-                    self.columns[col.name] = col
+            if len(values) > 0:
+                values = ", ".join(values)
+                qry = """
+                    ALTER TABLE `{table}`
+                    {cols_to_add}
+                    """.format(table=table_name, cols_to_add=values)
+                self.engine.execute(qry)
+                self.cols_to_add[table_name] = []
+
+            #reflect table again to have update columns
+            # TODO check to make sure old column reference still work
+            self.tables[table_name] = Table(table_name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
+            
+            for c in self.tables[table_name].c:
+                if c.name not in self.columns:
+                        col = DSMColumn(c, dsm_table=self, metadata=new_col_metadata[c.name])
+                        self.columns[col.name] = col
 
 
     ###############################
@@ -158,7 +205,7 @@ class DSMTable:
 
             cols.append(col)
         
-        return cols
+        return sorted(cols, key=lambda c: c.column.table.name)
 
     def get_columns_of_type(self, datatypes=[], **kwargs):
         """

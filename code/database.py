@@ -38,12 +38,12 @@ class Database:
         """
         related_tables = set([])
         for related in self.tables.values():
-            for fk in related.table.foreign_keys:
-                if fk.column.table == table.table:
+            for fk in related.base_table.foreign_keys:
+                if fk.column.table == table.base_table:
                     add = self.tables[fk.parent.table.name]
                     related_tables.add(add)
 
-            for fk in table.table.foreign_keys:
+            for fk in table.base_table.foreign_keys:
                 add = self.tables[fk.column.table.name]
                 related_tables.add(add)                
 

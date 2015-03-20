@@ -8,11 +8,11 @@ DEFAULT_METADATA = {
 }
 
 class DSMColumn():
-    def __init__(self, column, table, metadata=None):
-        self.table = table
+    def __init__(self, column, dsm_table, metadata=None):
+        self.dsm_table = dsm_table
         self.column = column
         self.name = column.name
-        self.unique_name =  self.table.table.name + '.' + self.name
+        self.unique_name =  column.table.name + '.' + self.name
         self.type = column.type
         self.primary_key = self.column.primary_key
         self.has_foreign_key = len(column.foreign_keys)>0
@@ -74,3 +74,36 @@ class DSMColumn():
 
     def prefix_name(self, prefix):
         return prefix + self.name
+
+
+
+def make_set_qry(set_values, join_on_child, join_on_parent):
+    target_table = set_values[0][0]
+    parent_table = set_values[0][2]
+    set_str = []
+    for s in set_values:
+        if s[0] != target_table:
+            raise Exception("more than one target table")
+        if s[2] != parent_table:
+            raise Exception("more than one parent table")
+
+        set_str.append("`%s`.`%s`=`%s`.`%s`" % s)
+
+
+
+    values = {
+        'target_table': target_table,
+        'parent_table' : parent_table,
+        'fk_child' : join_on_child,
+        'fk_parent' : join_on_parent,
+        'set' : ','.join(set_str),
+    }
+
+
+    qry = """
+    UPDATE `{target_table}`, `{parent_table}`
+    SET {set}
+    WHERE `{target_table}`.`{fk_child}` = `{parent_table}`.`{fk_parent}`
+    """.format(**values)
+
+    return qry
