@@ -21,6 +21,9 @@ class DSMColumn():
         if not metadata:
             self.metadata = dict(DEFAULT_METADATA)
 
+    def __repr__(self):
+        return "[COLUMN `%s`.`%s`]"%(self.column.table.name,self.metadata['real_name'])
+
     def update_metadata(self, update):
         self.metadata.update(update)
 
@@ -38,9 +41,11 @@ class DSMColumn():
 
         qry = """
         SELECT distinct(`{col_name}`) from `{table}`
-        """.format(col_name=self.name, table=self.table.table.name)
+        """.format(col_name=self.name, table=self.column.table.name)
 
-        distinct = self.table.engine.execute(qry).fetchall()
+        distinct = self.dsm_table.engine.execute(qry).fetchall()
+
+    
 
         vals = []
         for d in distinct:
@@ -55,6 +60,8 @@ class DSMColumn():
             if type(d) == long:
                 d = int(d)
 
+            # print type(d)
+
             if d == "\x00":
                 d = False
             elif d == "\x01":
@@ -68,8 +75,8 @@ class DSMColumn():
         return vals      
 
     def get_max_col_val(self):
-        qry = "SELECT MAX(`{col_name}`) from `{table}`".format(col_name=self.name, table=self.table.table.name)
-        result = self.table.engine.execute(qry).fetchall()
+        qry = "SELECT MAX(`{col_name}`) from `{table}`".format(col_name=self.name, table=self.column.table.name)
+        result = self.dsm_table.engine.execute(qry).fetchall()
         return result[0][0]
 
     def prefix_name(self, prefix):

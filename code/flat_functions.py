@@ -40,7 +40,7 @@ class FlatFeature(FeatureBase):
 
             new_metadata.update({ 
                 'path' : new_metadata['path'] + [path_add],
-                'categorical' : True,
+                'categorical' : col.metadata['categorical'],
                 'real_name' : prefix + col.metadata['real_name']
             })
 

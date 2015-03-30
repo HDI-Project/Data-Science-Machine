@@ -14,7 +14,6 @@ class FilterObject(object):
 
     def to_where_statement(self):
         stmt = "WHERE "
-        #TODO currently wont work with multiple filters because i forgot the AND
         and_cond = []
         for f in self.filters:
             cond = "`{col}` {op} {value}".format(col=f[0].name, op=f[1], value=repr(f[2]))
@@ -55,3 +54,10 @@ class FilterObject(object):
         label = self.get_label() + "_AND_" + f_obj.get_label()
         interval_num = max(self.interval_num, f_obj.interval_num)
         return FilterObject(filters, label)
+
+    def get_dependent_cols(self):
+        cols = []
+        for f in self.filters:
+            cols.append(f[0])
+
+        return cols

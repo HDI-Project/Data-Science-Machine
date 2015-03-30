@@ -1,4 +1,4 @@
-from features import make_all_features
+from make_features import make_all_features
 from database import Database
 import numpy as np
 from sklearn import tree

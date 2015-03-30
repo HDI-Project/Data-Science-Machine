@@ -9,3 +9,9 @@ class FeatureBase(object):
         if self.filter_obj:
             where_stmt = self.filter_obj.to_where_statement()
         return where_stmt
+
+    def get_filter_cols(self):
+        if self.filter_obj == None:
+            return []
+            
+        return self.filter_obj.get_dependent_cols()

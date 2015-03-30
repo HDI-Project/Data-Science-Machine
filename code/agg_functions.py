@@ -14,11 +14,11 @@ class AggFuncBase(FeatureBase):
         returns true if this agg function can be applied to this col. otherwise returns false
         todo: don't allow any function on columns that are all the same value
         """
-        
-
         if len(col.metadata['path']) > 0:
-            last = col.metadata['path'][-1]
-            if (last['feature_type'], last['feature_type_func']) in self.disallowed:
+            path_funcs = [(p['feature_type'], p['feature_type_func']) for p in col.metadata['path']]
+            
+            # print self.disallowed, path_funcs, self.disallowed.intersection(path_funcs)
+            if len(self.disallowed.intersection(path_funcs)) > 0:
                 return False
 
             #todo: not sure this matters anymore 
@@ -26,21 +26,18 @@ class AggFuncBase(FeatureBase):
             #     return False
 
         if len(col.metadata['path']) >= self.MAX_PATH_LENGTH:
-            print 'max path', len(col.metadata['path'])
+            # print 'max path', len(col.metadata['path'])
             return False
 
         #only use columns with more than 1 distinct value
         if len(col.get_distinct_vals()) < 2:
             return False
 
-
         #make sure the filter parameters allow aggregating this column
         if self.filter_obj and not self.filter_obj.can_agg(col):
             return False
 
         return True
-
-
 
     def apply(self):
         pass
@@ -53,10 +50,6 @@ class AggFuncMySQL(AggFuncBase):
         """
         returns true if this agg function can be applied to this col. otherwise returns false
         """
-        # if len(col.metadata['path']) >= 1:
-        #     if target_table.table.name ==  "Products":
-        #         pdb.set_trace()
-
         if not super(AggFuncMySQL, self).col_allowed(col, target_table=target_table):
             return False
 
@@ -66,20 +59,48 @@ class AggFuncMySQL(AggFuncBase):
         return True
 
     def apply(self, fk):
-        
+        def do_qry(new_table_name, related_table, fk, agg_select, set_values, involved_cols):
+            table.flush_columns()
+            params = {
+                "fk_select" : "`rt`.`%s`" % fk.parent.name,
+                "agg_select" : ", ".join(agg_select),
+                "set_values" : ", ".join(set_values),
+                "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
+                "related_table" : related_table.make_full_table_stmt(involved_cols),
+                "target_table" : new_table_name,
+                'where_stmt' : self.make_where_stmt()
+            }
+
+            
+            qry = """
+            UPDATE `{target_table}` a
+            LEFT JOIN ( SELECT {fk_select}, {agg_select}
+                   FROM ({related_table}) as rt
+                   {where_stmt}
+                   GROUP BY {fk_select}
+                ) b
+            ON {fk_join_on}
+            SET {set_values}
+            """.format(**params)
+            # print qry
+            table.engine.execute(qry)
+
+
         # check this logic
         table = self.db.tables[fk.column.table.name]
         related_table = self.db.tables[fk.parent.table.name]
         #determine columns to aggregate
         agg_select = []
         set_values = []
-        new_features = False
-        for col in related_table.columns.values():
+        parent_fk_col = related_table.columns[(fk.parent.table.name,fk.parent.name)]
+
+        last_target_table = None
+        involved_cols = self.get_filter_cols() + [parent_fk_col]
+        for col in related_table.get_column_info():
             if not self.col_allowed(col, target_table=table):
                 continue
 
             new_features = True
-
             #if the fk is a circular references and has a special column name, keep it. otherwise use the name of the table
             #todo: check this under new column name scheme
             if fk.column.table == fk.parent.table and fk.parent.name != fk.column.name:
@@ -109,45 +130,32 @@ class AggFuncMySQL(AggFuncBase):
                 'real_name' : new_col
             })
             
-            new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
+            new_table_name,new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
+            if last_target_table == None:
+                last_target_table = new_table_name
+
+            # print col, new_table_name, last_target_table
+            if new_table_name!=last_target_table:
+                do_qry(last_target_table, related_table, fk, agg_select, set_values, involved_cols)
+                agg_select = []
+                set_values = []
+                involved_cols = self.get_filter_cols() + [parent_fk_col]
+                last_target_table = new_table_name
+            # print "add col", table.table.name, new_col
+            involved_cols.append(col)
 
             if self.filter_obj and self.filter_obj.interval_num != None:
                 new_metadata['interval_num'] = self.filter_obj.interval_num
 
-            select = "{func}(`rt`.`{col_name}`) AS `{new_col}`".format(func=self.func.upper(),col_name=col.name, new_col=new_col_name)
+            select = "{func}(`{col_name}`) AS `{new_col}`".format(func=self.func.upper(),col_name=col.name, new_col=new_col_name)
             agg_select.append(select)
 
             value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col_name)
             set_values.append(value)
 
-            # print "add col", table.table.name, new_col
 
-        if new_features:
-            table.flush_columns()
-            params = {
-                "fk_select" : "`rt`.`%s`" % fk.parent.name,
-                "agg_select" : ", ".join(agg_select),
-                "set_values" : ", ".join(set_values),
-                "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
-                "related_table" : related_table.table.name,
-                "table" : table.table.name,
-                'where_stmt' : self.make_where_stmt()
-            }
-
-            
-            qry = """
-            UPDATE `{table}` a
-            LEFT JOIN ( SELECT {fk_select}, {agg_select}
-                   FROM `{related_table}` rt
-                   {where_stmt}
-                   GROUP BY {fk_select}
-                ) b
-            ON {fk_join_on}
-            SET {set_values}
-            """.format(**params)
-
-            table.engine.execute(qry)
-            # pdb.set_trace()
+        if len(set_values) > 0:
+            do_qry(new_table_name, related_table, fk, agg_select, set_values, involved_cols)
 
 class AggSum(AggFuncMySQL):
     name = "Sum"
@@ -200,7 +208,7 @@ class AggCount(AggFuncBase):
         else:
             new_col = "[count.{fk_name}]".format(fk_name=fk_name)
 
-        col = related_table.columns[fk.parent.name]
+        col = related_table.columns[(fk.parent.table.name,fk.parent.name)]
         
         new_metadata = col.copy_metadata()
 
@@ -217,45 +225,44 @@ class AggCount(AggFuncBase):
             'real_name' :new_col
         })
 
+        #if we are working with an interval filter, add interval number to new metadata
         if self.filter_obj and self.filter_obj.interval_num != None :
             new_metadata['interval_num'] = self.filter_obj.interval_num
 
-        new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata, flush=True)
+        new_table_name, new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata, flush=True)
+
+        involved_cols = self.get_filter_cols() + [col]
 
         params = {
-            "fk_select" : "`rt`.`%s`" % fk.parent.name,
-            "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
-            "related_table" : related_table.table.name,
-            "table" : table.table.name,
-            'new_col' : new_col_name,
+            "fk_select" : "rt.`%s`" % fk.parent.name,
+            "fk_join_on" : "`b`.`{rt_col}` = `target_table`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
+            "related_table" : related_table.make_full_table_stmt(involved_cols),
+            "table" : new_table_name,
+            'new_col_name' : new_col_name,
             'where_stmt' : self.make_where_stmt()
         }
 
             
         qry = """
-        UPDATE `{table}` a
+        UPDATE `{table}` target_table
         LEFT JOIN ( SELECT {fk_select}, COUNT({fk_select}) as count
-               FROM `{related_table}` rt
+               FROM ({related_table}) as rt
                {where_stmt}
                GROUP BY {fk_select}
             ) b
         ON {fk_join_on}
-        SET `a`.`{new_col}` = `b`.count
+        SET `target_table`.`{new_col_name}` = `b`.count
         """.format(**params)
-
+        # print qry
         table.engine.execute(qry)
 
 
 def make_interval_filters(col, n_intervals, delta):
     def date_to_str(d):
         return d.strftime('%Y-%m-%d %H:%M:%S')
-    #placeholder constants
-    
 
-    # related_table = coldb.tables[fk.parent.table.name]
     interval_filters = []
 
-    print col
     max_val = col.get_max_col_val()
 
     for n in xrange(n_intervals-1,-1, -1):
@@ -264,7 +271,6 @@ def make_interval_filters(col, n_intervals, delta):
         f_obj = FilterObject(interval_range, label="int=%d"%n, interval_num=n)
         interval_filters.append(f_obj)
         max_val = new_max
-
 
     return interval_filters
 
@@ -286,7 +292,6 @@ def make_intervals(db, fk):
     n_intervals = 10
     delta = timedelta(days=7)
     interval_filters = make_interval_filters(col, n_intervals, delta)
-
     for f_obj in interval_filters:
         apply_funcs(db, fk, f_obj)
 
@@ -296,17 +301,15 @@ def apply_funcs(db, fk, filter_obj=None):
     filters = make_categorical_filters(related_table)
 
     #TODO change these loops so the func is reinited so often
+    #apply every function
     for func in funcs:
-        if filter_obj:
-            func(db, filter_obj).apply(fk)
-        else:
-            func(db).apply(fk)
+        #apply
+        func(db,filter_obj).apply(fk)
 
         for f_obj in filters:  
             if filter_obj:  
                 f_obj = f_obj.AND(filter_obj)
-
-            func(db, f_obj).apply(fk) #apply without any filtering
+            func(db, f_obj).apply(fk)
         
 
 #agg oldest

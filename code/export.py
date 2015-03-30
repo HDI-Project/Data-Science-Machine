@@ -1,5 +1,5 @@
 import numpy as np
-from features import make_all_features
+from make_features import make_all_features
 import pdb
 
 def export_table(table, folder="out/"):

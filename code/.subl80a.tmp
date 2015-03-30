@@ -9,24 +9,27 @@ from sqlalchemy.schema import MetaData
 from column import DSMColumn
 
 from collections import defaultdict
-import cPickle as pickle
-
 
 class DSMTable:
-    MAX_COLS_TABLE = 500
+    MAX_COLS_TABLE = 100
 
     def __init__(self, table, db):
         self.db = db
         self.name = table.name
         self.base_table = table
         self.tables = {table.name: table}
-        self.engine = db.engine
+        self.engine = self.base_table.bind
+        self.session = sessionmaker(bind=self.engine)()
 
         self.primary_key_names = [key.name for key in table.primary_key]
 
         self.columns = {}
         self.cols_to_add = defaultdict(list)
         self.cols_to_drop = defaultdict(list)
+        
+        self.has_row_features = False
+        self.has_agg_features = False
+        self.has_flat_features = False
 
         self.num_added_tables = 0
         self.table_col_counts = {}
@@ -34,18 +37,6 @@ class DSMTable:
 
         self.init_columns()
 
-    def __getstate__(self):
-        """
-        prepare class for pickling
-        """
-        state = self.__dict__.copy()
-        del state['db']        
-        del state['engine']
-        return state
-
-    def set_db(self, db):
-        self.db = db
-        self.engine = db.engine
 
     def init_columns(self):
         """
@@ -97,7 +88,7 @@ class DSMTable:
 
             self.curr_table = self.make_new_table()
 
-        name = self.curr_table.name + "__" +  str(self.table_col_counts[self.curr_table.name])
+        name = self.curr_table.name + str(self.table_col_counts[self.curr_table.name])
         self.table_col_counts[self.curr_table.name] +=1
         return self.curr_table.name,name
 
@@ -228,8 +219,6 @@ class DSMTable:
 
     def get_categorical(self, max_proportion_unique=.3, min_proportion_unique=0, max_num_unique=10):
         cat_cols = self.get_column_info(match_func=lambda x: x.metadata["categorical"] == True)
-        if len(cat_cols) >0:
-            pdb.set_trace()
         # counts = self.get_num_distinct(cols)
         
         # qry = """
@@ -297,27 +286,15 @@ class DSMTable:
     ###############################
     # Query helper functions      #
     ###############################
-    def make_full_table_stmt(self, cols=None):
-        """
-        given a set of colums, make a select statement that generates a table where these columns can be selected from.
-        return the string of the query to do this
 
-        this is useful because the columns might reside in different tables, but this helper gets us a table that has them all
-        """
+    def make_full_table_stmt(self, cols=None):
         if cols == None:
             cols = self.get_column_info()
-
-        pk = self.get_column_info(match_func= lambda x: x.primary_key, first=True)
-
-        cols = set(cols)
-        cols.add(pk) ##make sure we have pk to avoid ambiquity in the order by
-
-        
-        #todo, check to make sure all cols are legal
-
+            
         SELECT = ','.join(["`%s`.`%s`"%(c.column.table.name,c.name) for c in cols])
         tables = set(["`"+c.column.table.name+"`" for c in cols])
         FROM = ",".join(tables)
+        pk = self.get_column_info(match_func= lambda x: x.primary_key, first=True)
 
         qry = """
         SELECT {SELECT} from {FROM} ORDER BY `{primary_key}`

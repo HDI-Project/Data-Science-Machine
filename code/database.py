@@ -8,11 +8,36 @@ import cPickle as pickle
 
 class Database:
     def __init__(self, url):
+        self.url = url
         self.engine = create_engine(url)
         self.metadata = MetaData(bind=self.engine)
         self.metadata.reflect()
         self.tables  = dict([(t.name, DSMTable(t, self)) for t in self.metadata.sorted_tables])
-        self.session = sessionmaker(bind=self.engine)()
+
+    def __getstate__(self):
+        """
+        prepare class for pickling
+        """
+        state = self.__dict__.copy()
+   
+        #pickle db connection
+        del state['engine']
+        del state['metadata']
+
+        return state
+
+    def __setstate__(self, state):
+        #unpickle db state
+        state['engine'] = create_engine(state['url'])
+        state['metadata'] = MetaData(bind=state['engine']).reflect()
+        self.__dict__.update(state) #update now so we have these properties when we call set_db
+
+        #make sure tables have db reference
+        for t in state['tables']:
+            state['tables'][t].set_db(self)
+
+        self.__dict__.update(state)
+
 
     def save(self, filename):
         pickle.dump( self, open(filename, "wb" ) )
@@ -27,8 +52,8 @@ class Database:
         """
         related_columns = []
         for related in self.tables.values():
-            for fk in related.table.foreign_keys:
-                if fk.column.table.name == table.table.name: # TODO: fix.  nmae is hack because these tables are differenct for some reason
+            for fk in related.base_table.foreign_keys:
+                if fk.column.table.name == table.base_table.name: # TODO: fix.  nmae is hack because these tables are differenct for some reason
                     related_columns.append(fk)
         return related_columns
 
