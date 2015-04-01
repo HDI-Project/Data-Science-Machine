@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Analyze{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+    .num_features_highlight{
+    	color: red;
+    }
+
+    .feature-item{
+    	cursor: pointer;
+    }
+
+    .feature-item:hover{
+    	background-color: #ddd;
+    }
+
+    .feature-item:active{
+    	background-color: #999;
+    }
+
+    .feature-item.selected{
+    	background-color: #999;
+    }
+
+    .feature-eng-highlight{
+    	font-size: 2em;
+    	word-wrap: break-word;
+		line-height: initial;
+		white-space: normal;
+    }
+
+    /*.feature-selector{
+    	width: 100%;
+    }*/
+
+    .modal-backdrop{
+    	height: 100%;
+    }
+  </style>
+  <script type="text/javascript">
+  	var features = {{features_str | safe}}
+  </script>
+  <link href="//cdnjs.cloudflare.com/ajax/libs/select2/4.0.0-rc.2/css/select2.min.css" rel="stylesheet" />
+<script src="//cdnjs.cloudflare.com/ajax/libs/select2/4.0.0-rc.2/js/select2.min.js"></script>
+  <script src="/static/analyze.js"></script>
+	<!-- <link rel="stylesheet" href="/static/base.css"> -->
+{% endblock %}
+{% block content %}
+	<div id="intro-modal" class="modal fade">
+	  <div class="modal-dialog">
+	    <div class="modal-content">
+	      <div class="modal-header">
+	        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+	        <h4 class="modal-title"><strong>Welcome to Entity Analysis</strong></h4>
+	      </div>
+	      <div class="modal-body">
+	        <p class="lead">We came up <span class="num_features_highlight">{{num_features}}</span> <i>new</i> feature ideas for {{entity_name}}!</p>
+	        <p> Now that the Data Science Machine has done the heavy lifting, you can begin exploring and building models for {{entity_name}}.</p>
+
+	        <p>You will see that we have some recommendations based on our analysis, but using our model builder you can tune everything to your liking.</p>
+	      </div>
+	      <div class="modal-footer">
+	        <button type="button" class="btn btn-default" data-dismiss="modal">Got it!</button>
+	      </div>
+	    </div><!-- /.modal-content -->
+	  </div><!-- /.modal-dialog -->
+	</div><!-- /.modal -->
+
+	<div id="model-modal" class="modal fade">
+	  <div class="modal-dialog">
+	    <div class="modal-content">
+	      <div class="modal-header">
+	        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+	        <h4 class="modal-title"><strong>Building models</strong></h4>
+	      </div>
+	      <div class="modal-body">
+	        <div id="model-progress-container" class="">
+  			<h3><span id="model-status"></span></h3>
+	  		<div class="progress">
+			  <div id="model-progress" class="progress-bar progress-bar-striped active" role="progressbar" style="width: 0%"></div>
+			</div>
+		</div>
+	      </div>
+	    </div><!-- /.modal-content -->
+	  </div><!-- /.modal-dialog -->
+	</div><!-- /.modal -->
+
+
+  <div class="container">
+  	<div class="row">
+	  	<div class="col-md-12">
+	  		<h2 id="entity-header" data-entity-name="{{entity_name}}" class="page-header">Entity Analysis: {{entity_name}}</h2>
+	  	</div>
+	</div>
+  	<div class="row">
+  		<div class="col-md-3">
+			<div class="panel panel-default">
+				<div class="panel-heading">
+					<h3 class="panel-title">Feature to predict</h3>
+				</div>
+				<div class="panel-body">Select a prediction problem from the features below. We recommend starting with the starred features. Alternatively, you can upload a new feature by clicking <a>here</a>.</div>
+				<ul id="feature-list" class="list-group">
+					{% for f in predictable_features %}
+						{% if loop.index <= 3 %}
+							<li class="feature-item list-group-item" data-id="{{f.id}}"><span class="glyphicon glyphicon-star" aria-hidden="true"></span> {{f.name}}</li>
+						{% else%}
+							{% if loop.index >= 15 %}
+							<li class=" hidden extra feature-item list-group-item">{{f}}</li>
+							{% else %}
+								<li class="feature-item list-group-item" data-id="{{f.id}}">{{f.name}}</li>
+								
+							{% endif %}
+				      	{% endif %}
+					{% endfor %}
+				</ul>
+			<div class="panel-footer"><button id="show-more-features" class="btn">Toggle more feautres</button></div>
+			</div>
+  		</div>
+
+  		<div id="feature-eng-panel" class="hidden col-md-9">
+  			<div class="row">
+  				<div class="col-md-6">
+	  				<div class="panel panel-default">
+					  <div class="panel-heading">
+					    <h3 class="panel-title">Modeling</h3>
+					  </div>
+					  <div class="panel-body">
+					    <div id="feature-eng-selection" class="text-center"><span class="feature-eng-highlight label label-primary selected-feature "></span></div>
+					  </div>
+					</div>
+  				</div>
+
+  				<div class="col-md-6">
+	  				<div class="panel panel-default">
+					  <div class="panel-heading">
+					    <h3 class="panel-title">Model Accuracy</h3>
+					  </div>
+					  <div class="panel-body">
+					    <div id="model-accuracy" class="hidden text-center"><span class="feature-eng-highlight label label-primary model-accuracy"></span></div>
+
+					    <button id="refresh-model" type="button" class="btn btn-info" ><span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Refresh model</button>
+					  </div>
+					</div>
+  				</div>
+  				
+  			</div>
+  			<div class="row">
+  				<div class="col-md-12">
+  					<h3>Feature selection</h3>
+	  				<select id="feature-selector" class="col-md-9" multiple="multiple">
+	  					{% for f in features %}
+	  						<option val="{{loop.index}}">{{f}}</option>
+	  					{% endfor %}
+	  				</select>
+  					
+  				</div>
+  			</div>
+  			<br>
+  			<div class="row">
+				<div class="col-md-12">
+					<h3 class="">Model Summary</h3>
+					<div id="model-summary-text" class="hidden">
+					    The model the performed best was <strong><span class="best-model"></span></strong>. It was trained using the following features, order by importance in the resulting model.
+					    <ol id="model-best-features">
+
+					    </ol>
+					</div>
+				</div>
+			</div>
+			<br>
+  			<div class="row">
+				<div class="col-md-12">
+					<button id="toggle-advanced" class="btn">Toggle advance model params</button>
+					<br>
+					<div id="advanced" class="hidden">
+						<h3 class="">Advanced Model Parameters</h3>
+						<h4>SVM</h4>
+						<div class="input-group">
+					      <span class="input-group-addon">C</span>
+					      <input type="text" class="form-control" placeholder="Default value: 1">
+					    </div>
+						<h4>Random Forest</h4>
+						<div class="input-group">
+					      <span class="input-group-addon">Depth</span>
+					      <input type="text" class="form-control" placeholder="Default value: None">
+					    </div>
+					    <br>
+					    <div class="input-group">
+					      <span class="input-group-addon">Number estimates</span>
+					      <input type="text" class="form-control" placeholder="Default value: 10">
+					    </div>
+						<h4>Linear Regression</h4>
+						<div class="input-group">
+					      <span class="input-group-addon">Normalize</span>
+					      <input type="text" class="form-control" placeholder="Default value: False">
+					    </div>
+					</div>
+					
+				</div>
+			</div>
+
+  		</div>
+
+
+  	</div>
+  </div>
+{% endblock %}

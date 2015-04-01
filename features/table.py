@@ -9,11 +9,10 @@ from sqlalchemy.schema import MetaData
 from column import DSMColumn
 
 from collections import defaultdict
-import cPickle as pickle
 
 
 class DSMTable:
-    MAX_COLS_TABLE = 500
+    MAX_COLS_TABLE = 100
 
     def __init__(self, table, db):
         self.db = db
@@ -31,6 +30,8 @@ class DSMTable:
         self.num_added_tables = 0
         self.table_col_counts = {}
         self.curr_table = None
+
+        self.num_rows = self.engine.execute("SELECT count(*) from `%s`" % (self.name)).fetchall()[0][0]
 
         self.init_columns()
 
@@ -209,6 +210,9 @@ class DSMTable:
         
         return sorted(cols, key=lambda c: c.column.table.name)
 
+    def get_col_by_name(self, col_name):
+        return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name, first=True)
+
     def get_columns_of_type(self, datatypes=[], **kwargs):
         """
         returns a list of columns that are type data_type
@@ -250,8 +254,6 @@ class DSMTable:
 
         return cat_cols
 
-
-
     def get_num_distinct(self, cols):
         """
         returns number of distinct values for each column in cols. returns in same order as cols
@@ -279,10 +281,9 @@ class DSMTable:
         """
 
 
-        qry = self.make_full_table_stmt()
+        qry = self.make_full_table_stmt(cols)
         rows = self.engine.execute(qry)
-
-        return self.engine.execute(qry)
+        return rows
 
 
     def get_rows_as_dict(self, cols):
@@ -316,10 +317,16 @@ class DSMTable:
         #todo, check to make sure all cols are legal
 
         SELECT = ','.join(["`%s`.`%s`"%(c.column.table.name,c.name) for c in cols])
-        tables = set(["`"+c.column.table.name+"`" for c in cols])
-        FROM = ",".join(tables)
+        tables = set([c.column.table.name for c in cols])
+        
+        FROM = tables.pop()
+        JOIN = ""
+        for t in tables:
+            JOIN += "JOIN `%s` on `%s`.`%s` = `%s`.`%s` " % (t, FROM, pk.name, t, pk.name)
 
         qry = """
-        SELECT {SELECT} from {FROM} ORDER BY `{primary_key}`
-        """.format(SELECT=SELECT, FROM=FROM, primary_key=pk.name)        
+        SELECT {SELECT} from `{FROM}` {JOIN} GROUP BY `{FROM}`.`{primary_key}` ORDER BY `{FROM}`.`{primary_key}`
+        """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name) 
+
+        # print qry       
         return qry

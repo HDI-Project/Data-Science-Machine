@@ -3,7 +3,8 @@ from sqlalchemy.schema import MetaData
 from sqlalchemy.engine import create_engine
 from sqlalchemy.orm import sessionmaker
 from table import DSMTable
-import cPickle as pickle
+# import cPickle as pickle
+import dill
 
 
 class Database:
@@ -40,11 +41,13 @@ class Database:
 
 
     def save(self, filename):
-        pickle.dump( self, open(filename, "wb" ) )
+        dill.dump( self, open(filename, "wb" ) )
 
     @staticmethod
     def load(filename):
-        return pickle.load( open( filename, "rb" ) )
+        db = dill.load( open( filename, "rb" ) )
+        print db
+        return db
 
     def get_related_fks(self, table):
         """

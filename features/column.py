@@ -4,7 +4,7 @@ import datetime
 DEFAULT_METADATA = {
     'path' : [], 
     'numeric' : False,
-    'categorical' : False
+    'categorical' : False,
 }
 
 class DSMColumn():

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	{% block head %}
+    <title>{% block title %}{% endblock %} - DSM</title>
+	<script src="//code.jquery.com/jquery-1.11.2.min.js"></script>
+	<!-- Latest compiled and minified JavaScript -->
+	<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
+	<!--<script src="http://code.highcharts.com/highcharts.js"></script>-->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap.min.css">
+	
+	<script src="/static/dash.js"></script>
+	<link rel="stylesheet" href="/static/base.css">
+	{% endblock %}
+</head>
+
+<body>
+	<nav class="navbar navbar-default">
+	  <div class="container-fluid">
+	    <div class="navbar-header">
+	      <a class="navbar-brand" href="/">
+	        <img id="brand-img" alt="Brand" src="/static/gears.png">
+	      </a>
+	      <h1 class="navbar-text">Data Science Machine</h1>
+	    </div>
+	  </div>
+	</nav>
+    {% block content %}{% endblock %}
+</body>
+</html>
+

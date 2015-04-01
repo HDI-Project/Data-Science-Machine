@@ -80,18 +80,19 @@ def make_flat_features(db, table, caller, depth):
 if __name__ == "__main__":
     import debug
 
-    # os.system("mysql -t < ../Northwind.MySQL5.sql")
+    os.system("mysql -t < ../Northwind.MySQL5.sql")
     # # # os.system("mysql -t < ../allstate/allstate.sql")
 
-    # database_name = 'northwind'
-    # db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
-    # table = db.tables['Suppliers']
-    # make_all_features(db, table)
-    # db.save("test")
+    database_name = 'northwind'
+    table_name = "Products"
+    db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
+    table = db.tables[table_name]
+    make_all_features(db, table)
+    db.save(table_name)
 
     
-    db = Database.load("test")
-    table = db.tables['Suppliers']
+    db = Database.load(table_name)
+    table = db.tables[table_name]
 
     # profile.run('make_all_features(db, table)')
     debug.export_col_names(table)

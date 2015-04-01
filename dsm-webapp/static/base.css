@@ -1,0 +1,25 @@
+html {
+  overflow-y: scroll;
+}
+
+#brand-img{
+	width: 40px;
+	border-radius: 3px;
+}
+
+.grouping{
+	margin-right: 0;
+	margin-left: 0;
+	background-color: #fff;
+	border-color: #ddd;
+	border-width: 1px;
+	border-radius: 4px 4px 0 0;
+	-webkit-box-shadow: none;
+	box-shadow: none;
+}
+
+.page-header{
+	background-color: #ddd;
+	padding: 10px;
+	border-radius: 5px;
+}
