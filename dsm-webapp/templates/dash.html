@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Zinc Dashboard</title>
+	<script src="//code.jquery.com/jquery-1.11.2.min.js"></script>
+	<script src="http://code.highcharts.com/highcharts.js"></script>
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap.min.css">
+	
+	<script src="/static/dash.js"></script>
+	<link rel="stylesheet" href="/static/dash.css">
+</head>
+
+<body>
+    <div class="container">
+		<div id="header" class="row" data-client-token="{{client_token}}">
+		   <h1><a id="back" class="btn btn-success" href="/">&lt; Back</a>Showing metrics for {{client_token}}</h1>
+			
+		</div>
+
+
+		<div id="graph-container" class="col-md-12">
+			<div id="monthly-graph" class="graph"></div>
+			<div id="daily-graph" class="graph"></div>
+		</div>
+
+		<div id="metrics" class="row">
+			<div class="col-md-3">
+				<div class="metric-container">
+					<div class="metric-name">Total Orders</div>
+					<div id="total_orders" class="metric-val"></div>
+				</div>
+			</div>
+
+			<div class="col-md-3">
+				<div class="metric-container">
+					<div class="metric-name">Total Profit</div>
+					<div id="profit" class="metric-val"></div>
+				</div>
+			</div>
+
+			<div class="col-md-3">
+				<div class="metric-container">
+					<div class="metric-name">Gross Earnings</div>
+					<div id="gross_earnings" class="metric-val"></div>
+				</div>
+			</div>
+
+			<div class="col-md-3">
+				<div class="metric-container">
+					<div class="metric-name">Amazon Total</div>
+					<div id="amazon_total" class="metric-val"></div>
+				</div>
+			</div>
+
+		</div>
+
+			<div class="col-md-2">
+				<button id="reset" class="btn btn-danger">Reset</button>
+			</div>
+
+
+
+		<div id="monthly-data" class="col-md-12">
+			<h2>Monthly</h2>
+			<table id="month-table" class="table">
+				<thead>
+					<tr>
+						<th></th>
+						<th>Month</th>
+						<th>Total Orders</th>
+						<th>Profit</th>
+						<th>Gross Earnings</th>
+						<th>Amazon Total</th>
+					</tr>
+				</thead>
+				<tbody>
+				{% for month in months %}
+					<tr>
+						<td class="month-select"> <button data-month="{{month.month}}/{{month.year}}" class="btn btn-primary">View month</button></td>
+						<td> {{month.month}}/{{month.year}}</td>
+						<td> {{month.total_orders}}</td>
+						<td> ${{month.profit/100}}</td>
+						<td> ${{month.gross_earnings/100}}</td>
+						<td> ${{month.amazon_total/100}}</td>
+					</tr>
+				{% endfor %}
+				</tbody>
+			</table>
+		</div>
+	</div>
+</body>
+</html>
+

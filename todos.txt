@@ -1,0 +1,19 @@
+- dont try to predict flat features
+
+
+- column predictions
+
+
+- make sure dsm doesnt calculate pointless values such as decile for the day of the week or decile of a decile
+
+- add in meadian as function
+
+- how to name agg columns
+
+- external data
+
+-clustering? eg product recommendation
+
+- handle circular case for agg functions
+
+- think about cases where a created variable may be categorical

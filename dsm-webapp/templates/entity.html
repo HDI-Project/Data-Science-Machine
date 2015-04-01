@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Entity{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+    .entity-select {
+    	width: 150px;
+		height: 150px;
+		margin: 10px 0;
+	}
+
+	.entity-name{
+		font-size: 1.5em;
+		font-weight: bold
+	}
+  </style>
+  <script src="/static/entity.js"></script>
+	<!-- <link rel="stylesheet" href="/static/base.css"> -->
+{% endblock %}
+{% block content %}
+  <div class="container">
+  	<div id="entity-form" class="col-md-8 col-md-offset-2">
+  		<h2 class="page-header">Select Entity</h2>
+  		<div class="row">
+	  		{% for e in entities %}
+	  			<div class="col-md-3">
+	  				<button class="entity-select btn btn-default" type="submit">
+	  					<span class="entity-name">{{e.name}}</span>
+	  					<br>
+	  					<span class="entity-count">{{e.count}} rows</span>
+	  				</button>
+	  			</div>
+	  		{% endfor %}
+	  	</div>
+  		<br>
+	  	<div class="row"> 
+	  		<div class="pull-right">
+		    	<button id="entity-submit" type="button" class="hidden btn btn-lg btn-success">Analyze</button>
+		    </div>
+	  	</div>
+
+  	</div>
+		<div class="grouping">
+  		<div id="entity-progress-container" class="hidden">
+  			<h3>Analyzing <span id="analyze-count"></span> from <span id="analyze-name"></span>...</h3>
+	  		<div class="progress">
+			  <div id="entity-progress" class="progress-bar progress-bar-striped active" role="progressbar" style="width: 0%"></div>
+			</div>
+		</div>
+	 </div>
+  	</div>
+  </div>
+{% endblock %}

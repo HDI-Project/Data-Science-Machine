@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Connect{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+    .important { color: #336699; }
+  </style>
+  <script src="/static/connect.js"></script>
+	<!-- <link rel="stylesheet" href="/static/base.css"> -->
+{% endblock %}
+{% block content %}
+  <div class="container">
+  	<div class="col-md-8 col-md-offset-2">
+  		<h2 class="page-header">Connect to database</h2>
+  		<br>
+  		<div class="grouping">
+			<form id="connect-form" class="">
+			    <div class="input-group">
+			      <span class="input-group-addon">Database Name</span>
+			      <input type="text" class="form-control" placeholder="Example database">
+			    </div>
+			    <br>
+			    <div class="input-group">
+			      <span class="input-group-addon">Database URI</span>
+			      <input type="text" class="form-control" placeholder="mysql+mysqldb://kanter@localhost/example-db">
+			    </div>
+			    <br>
+	  			<div>or, <a> upload a csv </a></div>
+		  		<br>
+			    <div class="pull-right">
+			    <button id="connect-submit" type="button" class="btn btn-success">Connect</button>
+			    </div>
+	  		</form>
+
+
+	  		<div id="connect-progress-container" class="hidden">
+	  			<h3>Connecting...</h3>
+		  		<div class="progress">
+				  <div id="connect-progress" class="progress-bar progress-bar-striped active" role="progressbar" style="width: 0%"></div>
+				</div>
+			</div>
+		 </div>
+  	</div>
+  </div>
+{% endblock %}

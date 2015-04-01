@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Zinc Dashboard</title>
+	<!-- <link rel="stylesheet" href="css/style.css"> -->
+	<script src="//code.jquery.com/jquery-1.11.2.min.js"></script>
+	<script src="http://code.highcharts.com/highcharts.js"></script>
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap.min.css">
+	
+	<script src="/static/dash.js"></script>
+	<link rel="stylesheet" href="/static/dash.css">
+</head>
+
+<body>
+	<div class="container">
+		<div id="header" data-client-token="{{client_token}}">
+		   <h2 class="text-muted">Metrics</h2>
+		</div>
+
+	 	<form method="get" action="/">
+		Client_token: <input type="text" name="token">
+		<input type="submit" value="Submit">
+		</form>
+
+		<h4>All Tokens</h4>
+		{% for token in all_tokens %}
+			<div><a href="/?token={{token}}">{{token}}</a></div>
+		{% endfor %}
+		
+	</div>
+</body>
+</html>
+
