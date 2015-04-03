@@ -84,7 +84,7 @@ if __name__ == "__main__":
     # # # os.system("mysql -t < ../allstate/allstate.sql")
 
     database_name = 'northwind'
-    table_name = "Products"
+    table_name = "Customers"
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
     table = db.tables[table_name]
     make_all_features(db, table)

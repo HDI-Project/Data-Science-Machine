@@ -50,7 +50,7 @@ def analyze():
     entity = db.tables[entity_name]
 
     predictable_features = [{"name":c.metadata["real_name"], "id":c.name}  for c in predict.get_predictable_features(entity)]
-    features = utils.get_col_names(entity)
+    features = [{"name":c.metadata["real_name"], "id":c.name} for c in entity.get_column_info()]
 
     # random.shuffle(features)
 
@@ -69,7 +69,7 @@ def model():
     entity_name = request.args.get('entity', None)
     entity = db.tables[entity_name]
 
-    using_names = request.args.get('using', [])
+    using_names = request.args.getlist('using[]')
     using = [entity.get_col_by_name(c) for c in using_names]
 
     target_feature_name = request.args.get('target', None)
@@ -80,11 +80,12 @@ def model():
     else: 
         score, using = predict.model(target_feature, using)
 
-    using = [(u.metadata["real_name"], u.name) for u in using]
+    print using
+    using = [{"name":u.metadata["real_name"], "id":u.name, "weight": weight} for (u,weight) in using]
 
     return flask.jsonify(score=score, using=using)
 
 
 if __name__ == "__main__":
-    db = database.Database.load("../features/Products")
+    db = database.Database.load("../features/Customers")
     app.run(debug=True)
