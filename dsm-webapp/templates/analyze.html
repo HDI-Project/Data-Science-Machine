@@ -33,10 +33,6 @@
     /*.feature-selector{
     	width: 100%;
     }*/
-
-    .modal-backdrop{
-    	height: 100%;
-    }
   </style>
   <script type="text/javascript">
   	var features = {{features_str | safe}}
@@ -103,12 +99,12 @@
 				<ul id="feature-list" class="list-group">
 					{% for f in predictable_features %}
 						{% if loop.index <= 3 %}
-							<li class="feature-item list-group-item" data-id="{{f.id}}"><span class="glyphicon glyphicon-star" aria-hidden="true"></span> {{f.name}}</li>
+							<li class="feature-item list-group-item" data-id="{{f.id}}" data-name="{{f.name}}"><span class="glyphicon glyphicon-star" aria-hidden="true"></span> {{f.name}}</li>
 						{% else%}
 							{% if loop.index >= 15 %}
-							<li class=" hidden extra feature-item list-group-item">{{f}}</li>
+							<li class=" hidden extra feature-item list-group-item" data-id="{{f.id}}" data-name="{{f.name}}">{{f.name}}</li>
 							{% else %}
-								<li class="feature-item list-group-item" data-id="{{f.id}}">{{f.name}}</li>
+								<li class="feature-item list-group-item" data-id="{{f.id}}" data-name="{{f.name}}">{{f.name}}</li>
 								
 							{% endif %}
 				      	{% endif %}
@@ -134,10 +130,12 @@
   				<div class="col-md-6">
 	  				<div class="panel panel-default">
 					  <div class="panel-heading">
-					    <h3 class="panel-title">Model Accuracy</h3>
+					    <h3 class="panel-title">Model score</h3>
 					  </div>
 					  <div class="panel-body">
-					    <div id="model-accuracy" class="hidden text-center"><span class="feature-eng-highlight label label-primary model-accuracy"></span></div>
+					    <div id="model-score" class="hidden text-center"><span class="feature-eng-highlight label model-score"></span></div>
+					    <br>
+						<div id="prev-model-score" class="hidden text-center">Previous score: <span class="prev-model-score"></span></div>					    
 
 					    <button id="refresh-model" type="button" class="btn btn-info" ><span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Refresh model</button>
 					  </div>
@@ -148,9 +146,9 @@
   			<div class="row">
   				<div class="col-md-12">
   					<h3>Feature selection</h3>
-	  				<select id="feature-selector" class="col-md-9" multiple="multiple">
+	  				<select id="feature-selector" data-placeholder="Select features for model" class="col-md-9" multiple="multiple">
 	  					{% for f in features %}
-	  						<option val="{{loop.index}}">{{f}}</option>
+	  						<option value="{{f.id}}">{{f.name}}</option>
 	  					{% endfor %}
 	  				</select>
   					

@@ -208,10 +208,16 @@ class DSMTable:
 
             cols.append(col)
         
+        if first:
+            return None
+
         return sorted(cols, key=lambda c: c.column.table.name)
 
     def get_col_by_name(self, col_name):
         return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name, first=True)
+
+    def names_to_cols(self, names):
+        return [self.get_col_by_name(n) for n in names]
 
     def get_columns_of_type(self, datatypes=[], **kwargs):
         """
@@ -311,7 +317,7 @@ class DSMTable:
         pk = self.get_column_info(match_func= lambda x: x.primary_key, first=True)
 
         cols = set(cols)
-        cols.add(pk) ##make sure we have pk to avoid ambiquity in the order by
+        # cols.add(pk) ##make sure we have pk to avoid ambiquity in the order by
 
         
         #todo, check to make sure all cols are legal

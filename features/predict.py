@@ -46,7 +46,7 @@ def get_usable_features(target_col):
 
 def make_data(target_col, feature_cols):
     table = target_col.dsm_table
-
+    print "feature_cols 1", feature_cols
     rows = table.get_rows_as_dict(feature_cols) 
     for row in rows:
         for col in row:
@@ -77,7 +77,17 @@ def model(target_col, feature_cols):
 
     clf.fit(rows, y)
     score = clf.score(rows, y)
-    return score, feature_cols
+
+    names = target_col.dsm_table.names_to_cols(clf.named_steps['vect'].get_feature_names())
+    weights = clf.named_steps["regression"].coef_
+
+    print names
+    print weights
+    using = zip(names, weights)
+    # using = zip(using,clf.named_steps['regression'].coef_)
+
+
+    return score, using
 
 
 
@@ -100,7 +110,7 @@ def best_model(target_col):
     support_cols = [target_col.dsm_table.get_col_by_name(n) for i,n in enumerate(names) if support[i]]
     # using = zip(using,clf.named_steps['regression'].coef_)
     # using = sorted(using, key=lambda x: -abs(x[1]))
-
+    print names, support
     return model(target_col, support_cols)
 
 
