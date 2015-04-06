@@ -1,4 +1,5 @@
 - dont try to predict flat features
+- dont agg flattened agg features. at least dont sum
 
 
 - column predictions

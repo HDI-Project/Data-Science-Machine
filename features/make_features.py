@@ -27,7 +27,8 @@ def make_all_features(db, table, caller=None, depth=0):
     for related in db.get_related_tables(table):
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
-            make_all_features(db, related, caller=table, depth=depth+1)
+            if related.num_rows < 1000000:
+                make_all_features(db, related, caller=table, depth=depth+1)
 
 
     print "*"*depth +  'making agg features %s, caller= %s' % (table.name, caller_name)
@@ -80,11 +81,12 @@ def make_flat_features(db, table, caller, depth):
 if __name__ == "__main__":
     import debug
 
-    os.system("mysql -t < ../Northwind.MySQL5.sql")
+    # os.system("mysql -t < ../Northwind.MySQL5.sql")
     # # # os.system("mysql -t < ../allstate/allstate.sql")
 
-    database_name = 'northwind'
-    table_name = "Customers"
+    # database_name = 'northwind'
+    database_name = 'donorschoose'
+    table_name = "Outcomes"
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
     table = db.tables[table_name]
     make_all_features(db, table)

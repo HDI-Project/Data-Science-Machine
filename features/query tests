@@ -1,0 +1,45 @@
+ UPDATE `Teachers_1` target_table
+        LEFT JOIN ( SELECT rt.`teacher_acctid`, COUNT(rt.`teacher_acctid`) as count
+               FROM (
+        SELECT `Projects`.`teacher_acctid` from `Projects`  GROUP BY `Projects`.`projectid` ORDER BY `Projects`.`projectid`
+        ) as rt
+               
+               GROUP BY rt.`teacher_acctid`
+            ) b
+        ON `b`.`teacher_acctid` = `target_table`.`teacher_acctid`
+        SET `target_table`.`Teachers_1__0` = `b`.count
+
+
+
+
+
+UPDATE `Teachers_1` target_table
+left join (
+	select teacher_acctid, count(Projects.teacher_acctid) as count
+	from Projects
+	group by teacher_acctid) as rt
+on rt.teacher_acctid = target_table.teacher_acctid
+SET `target_table`.`Teachers_1__0` = rt.count
+where `target_table`.teacher_acctid = rt.`teacher_acctid`;
+
+UPDATE `Donors_1` target_table
+        LEFT JOIN ( SELECT `donor_acctid`, COUNT(`donor_acctid`) as count
+               FROM Donations
+               
+               GROUP BY `donor_acctid`
+            ) b
+        ON `b`.`donor_acctid` = `target_table`.`donor_acctid`
+        SET `target_table`.`Donors_1__0` = `b`.count
+        where `b`.`donor_acctid` = `target_table`.`donor_acctid`;
+
+
+ select count (*) from target_table
+        LEFT JOIN ( SELECT `donor_acctid`, COUNT(`donor_acctid`) as count
+               FROM Donations
+               
+               GROUP BY `donor_acctid`
+            ) b
+        ON `b`.`donor_acctid` = `target_table`.`donor_acctid`
+
+
+ 

@@ -75,9 +75,12 @@ def model(target_col, feature_cols):
             ('regression', linear_model.LinearRegression())
     ])
 
-    clf.fit(rows, y)
-    score = clf.score(rows, y)
+    print "fit"
 
+    clf.fit(rows, y)
+    print "score"
+    score = clf.score(rows, y)
+    print "done fit and score"
     names = target_col.dsm_table.names_to_cols(clf.named_steps['vect'].get_feature_names())
     weights = clf.named_steps["regression"].coef_
 

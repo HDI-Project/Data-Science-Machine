@@ -81,6 +81,7 @@ class AggFuncMySQL(AggFuncBase):
                 ) b
             ON {fk_join_on}
             SET {set_values}
+            WHERE {fk_join_on}
             """.format(**params)
             # print qry
             table.engine.execute(qry)
@@ -234,9 +235,9 @@ class AggCount(AggFuncBase):
         involved_cols = self.get_filter_cols() + [col]
 
         params = {
-            "fk_select" : "rt.`%s`" % fk.parent.name,
+            "fk_select" : "`%s`" % fk.parent.name,
             "fk_join_on" : "`b`.`{rt_col}` = `target_table`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
-            "related_table" : related_table.make_full_table_stmt(involved_cols),
+            "related_table" : col.column.table.name,#related_table.make_full_table_stmt(involved_cols),
             "table" : new_table_name,
             'new_col_name' : new_col_name,
             'where_stmt' : self.make_where_stmt()
@@ -246,15 +247,17 @@ class AggCount(AggFuncBase):
         qry = """
         UPDATE `{table}` target_table
         LEFT JOIN ( SELECT {fk_select}, COUNT({fk_select}) as count
-               FROM ({related_table}) as rt
+               FROM {related_table}
                {where_stmt}
                GROUP BY {fk_select}
             ) b
         ON {fk_join_on}
         SET `target_table`.`{new_col_name}` = `b`.count
+        where {fk_join_on}
         """.format(**params)
-        # print qry
+        print qry
         table.engine.execute(qry)
+        print "done"
 
 
 def make_interval_filters(col, n_intervals, delta):

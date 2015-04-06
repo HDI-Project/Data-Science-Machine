@@ -76,16 +76,18 @@ class DSMTable:
         # qry = """
         # CREATE table {new_table_name} as (select {select_pk} from {old_table})
         # """.format(new_table_name=new_table_name, select_pk=",".join(self.primary_key_names), old_table=self.name)
+        try:
+            qry = """
+            CREATE TABLE `{new_table_name}` LIKE `{old_table}`; 
+            """.format(new_table_name=new_table_name, old_table=self.name)
+            self.engine.execute(qry)
 
-        qry = """
-        CREATE TABLE `{new_table_name}` LIKE `{old_table}`; 
-        """.format(new_table_name=new_table_name, old_table=self.name)
-        self.engine.execute(qry)
-
-        qry = """
-        INSERT `{new_table_name}` SELECT * FROM `{old_table}`;
-        """.format(new_table_name=new_table_name, old_table=self.name)
-        self.engine.execute(qry)
+            qry = """
+            INSERT `{new_table_name}` SELECT * FROM `{old_table}`;
+            """.format(new_table_name=new_table_name, old_table=self.name)
+            self.engine.execute(qry)
+        except Exception,e:
+            print
 
         self.tables[new_table_name] = Table(new_table_name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
         self.table_col_counts[new_table_name] = 0
@@ -115,6 +117,7 @@ class DSMTable:
         """
         table_name,column_name = self.make_column_name()
         self.cols_to_add[table_name] += [(column_name, column_type, metadata)]
+        print column_name, metadata["real_name"]
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
 

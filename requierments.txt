@@ -1,0 +1,7 @@
+dill
+numpy
+sqlalchemy
+inflect
+scikit-learn
+flask
+#scipy and numpy sudo apt-get install python-numpy python-scipy python-matplotlib ipython ipython-notebook python-pandas python-sympy python-nose
