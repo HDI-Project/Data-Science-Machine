@@ -58,15 +58,29 @@ class AggFuncMySQL(AggFuncBase):
 
         return True
 
+    def make_real_name(self, col, fk_name):
+        if self.filter_obj :
+                new_col = "[{func}({fk_name}.{col_name}_{filter_label})".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name, filter_label=self.filter_obj.get_label())
+        else:
+            new_col = "{func}({fk_name}.{col_name})".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name)
+            
+        return new_col
+
     def apply(self, fk):
         def do_qry(new_table_name, related_table, fk, agg_select, set_values, involved_cols):
+            #small optimization to avoid creating complex query for involved cols if not necessary
+            if all([c.column.table == related_table.base_table for c in involved_cols]):
+                related_table_name = related_table.base_table.name
+            else:
+                related_table_name = "(" + related_table.make_full_table_stmt(involved_cols) + ")"
+
             table.flush_columns()
             params = {
                 "fk_select" : "`rt`.`%s`" % fk.parent.name,
                 "agg_select" : ", ".join(agg_select),
                 "set_values" : ", ".join(set_values),
                 "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
-                "related_table" : related_table.make_full_table_stmt(involved_cols),
+                "related_table" : related_table_name,
                 "target_table" : new_table_name,
                 'where_stmt' : self.make_where_stmt()
             }
@@ -75,7 +89,7 @@ class AggFuncMySQL(AggFuncBase):
             qry = """
             UPDATE `{target_table}` a
             LEFT JOIN ( SELECT {fk_select}, {agg_select}
-                   FROM ({related_table}) as rt
+                   FROM {related_table} as rt
                    {where_stmt}
                    GROUP BY {fk_select}
                 ) b
@@ -83,7 +97,7 @@ class AggFuncMySQL(AggFuncBase):
             SET {set_values}
             WHERE {fk_join_on}
             """.format(**params)
-            # print qry
+            print qry
             table.engine.execute(qry)
 
 
@@ -109,11 +123,7 @@ class AggFuncMySQL(AggFuncBase):
             else:
                 fk_name = fk.parent.table.name
 
-            if self.filter_obj :
-                new_col = "[{func}.{fk_name}.{col_name}_{filter_label}]".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name, filter_label=self.filter_obj.get_label())
-            else:
-                new_col = "[{func}.{fk_name}.{col_name}]".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name)
-            
+            new_col = self.make_real_name(col, fk_name)
 
             new_metadata = col.copy_metadata()
 
@@ -191,6 +201,14 @@ class AggCount(AggFuncBase):
             return False
         return True
 
+    def make_real_name(self, fk_name):
+        if self.filter_obj:
+            new_col = "count({fk_name}_{filter_label})".format(fk_name=fk_name, filter_label=self.filter_obj.get_label())
+        else:
+            new_col = "count({fk_name})".format(fk_name=fk_name)
+
+        return new_col
+
     def apply(self, fk):
         
         # check this logic
@@ -204,10 +222,7 @@ class AggCount(AggFuncBase):
         else:
             fk_name = fk.parent.table.name
 
-        if self.filter_obj:
-            new_col = "[count.{fk_name}_{filter_label}]".format(fk_name=fk_name, filter_label=self.filter_obj.get_label())
-        else:
-            new_col = "[count.{fk_name}]".format(fk_name=fk_name)
+        new_col = self.make_real_name(fk_name)
 
         col = related_table.columns[(fk.parent.table.name,fk.parent.name)]
         

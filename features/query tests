@@ -11,6 +11,16 @@
 
 
 
+ UPDATE `Teachers_1` target_table
+        LEFT JOIN ( SELECT rt.`teacher_acctid`, COUNT(rt.`teacher_acctid`) as count
+               FROM (
+        SELECT `Projects`.`teacher_acctid` from `Projects`  GROUP BY `Projects`.`projectid` 
+        ) as rt
+               
+               GROUP BY rt.`teacher_acctid`
+            ) b
+        ON `b`.`teacher_acctid` = `target_table`.`teacher_acctid`
+        SET `target_table`.`Teachers_1__0` = `b`.count
 
 
 UPDATE `Teachers_1` target_table
@@ -42,4 +52,17 @@ UPDATE `Donors_1` target_table
         ON `b`.`donor_acctid` = `target_table`.`donor_acctid`
 
 
+ALTER table Donors_1
+    PARTITION BY HASH(donor_acctid)
+    PARTITIONS 2;
+
  
+SELECT `Projects`.`total_price_including_optional_support`,
+		`Schools`.`school_county`
+
+SELECT `Projects`.`total_price_including_optional_support`,`Schools`.`school_county`
+        FROM `Outcomes`
+        JOIN `Projects` on `Projects`.`projectid` = `Projects`.`id` 
+        GROUP BY `Schools`.`id`
+        ORDER BY `Schools`.`id`
+

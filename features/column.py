@@ -7,7 +7,7 @@ DEFAULT_METADATA = {
     'categorical' : False,
 }
 
-class DSMColumn():
+class DSMColumn(object):
     def __init__(self, column, dsm_table, metadata=None):
         self.dsm_table = dsm_table
         self.column = column

@@ -25,10 +25,13 @@ def make_all_features(db, table, caller=None, depth=0):
     print "*"*depth + 'making all features %s, caller= %s' % (table.name, caller_name)
 
     for related in db.get_related_tables(table):
+        if table.name == "Projects" and related.name != "Resources":
+            print "skip " + related.name 
+            continue
+
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
-            if related.num_rows < 1000000:
-                make_all_features(db, related, caller=table, depth=depth+1)
+            make_all_features(db, related, caller=table, depth=depth+1)
 
 
     print "*"*depth +  'making agg features %s, caller= %s' % (table.name, caller_name)
@@ -67,6 +70,7 @@ def make_flat_features(db, table, caller, depth):
         if parent_table in [table, caller]:
             continue
 
+        
         flat.apply(fk)
         
 
@@ -86,8 +90,13 @@ if __name__ == "__main__":
 
     # database_name = 'northwind'
     database_name = 'donorschoose'
-    table_name = "Outcomes"
+    table_name = "Projects"
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
+    for t in ["Schools_1", "Teachers_1", "Vendors_1", "Donors_1", "Projects_1"]:
+        try:
+            db.engine.execute("drop table %s" % t)
+        except Exception, e:
+            print e
     table = db.tables[table_name]
     make_all_features(db, table)
     db.save(table_name)

@@ -12,7 +12,7 @@ from collections import defaultdict
 
 
 class DSMTable:
-    MAX_COLS_TABLE = 100
+    MAX_COLS_TABLE = 200
 
     def __init__(self, table, db):
         self.db = db
@@ -115,6 +115,12 @@ class DSMTable:
 
         todo: suport where to add it
         """
+        if (type(column_type) == DSMColumn):
+            self.columns[(column_type.column.table.name,column_type.name)] = column_type
+            print column_type.name, column_type.metadata["real_name"]
+            return column_type.column.table.name,column_type.name
+        
+
         table_name,column_name = self.make_column_name()
         self.cols_to_add[table_name] += [(column_name, column_type, metadata)]
         print column_name, metadata["real_name"]
@@ -239,6 +245,9 @@ class DSMTable:
     def has_column(self, table_name, name):
         return (table_name,name) in self.columns
 
+    def has_table(self, table_name):
+        return table_name in self.tables
+
     def get_categorical(self, max_proportion_unique=.3, min_proportion_unique=0, max_num_unique=10):
         cat_cols = self.get_column_info(match_func=lambda x: x.metadata["categorical"] == True)
         if len(cat_cols) >0:
@@ -313,29 +322,83 @@ class DSMTable:
         return the string of the query to do this
 
         this is useful because the columns might reside in different tables, but this helper gets us a table that has them all
+
+
+        since the true column data is in many different tables, we need to join tables together.
+        
+        this is done by sorting the columns by the longest paths          
         """
+        def join_tables(base_table, join_to, join_to_dsm_table):
+            for fk in base_table.foreign_keys:
+                if join_to_dsm_table.has_table(fk.column.table.name):
+                    join_str = """
+                    JOIN `{join_to_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
+                    """.format(join_to_table=join_to.name, base_table=base_table.name, join_to_col=fk.column.name, base_col=fk.parent.name )
+                    return join_str
+
+            pdb.set_trace()
+                    
+
         if cols == None:
             cols = self.get_column_info()
 
         pk = self.get_column_info(match_func= lambda x: x.primary_key, first=True)
 
-        cols = set(cols)
+        # cols = set(cols)
         # cols.add(pk) ##make sure we have pk to avoid ambiquity in the order by
 
-        
         #todo, check to make sure all cols are legal
+        sorted_cols = sorted(cols, key=lambda c: -len(c.metadata['path'])) #sort cols by longest path to shortest
+
+
+        joins = []
+        for c in sorted_cols:
+            last_table = self.base_table
+
+            #case where there is no path because this feature is part of dsm_table
+            if c.metadata["path"] == []:
+                join_to = c.column.table
+                join_to_dsm_table = c.dsm_table
+                if join_to != last_table:
+                    join = join_tables(last_table, join_to,join_to_dsm_table)
+                    if join not in joins:
+                        joins.append(join)
+
+            for node in reversed(c.metadata["path"]):
+                if node['feature_type'] == "agg":
+                    continue
+                # this column resides in a sub table of dsm_table or not
+                join_to_dsm_table = node['base_column'].dsm_table
+                if node['base_column'].dsm_table.has_table(node['base_column'].column.table.name):
+                    join_to = node['base_column'].column.table
+
+                #column doesn't exists in a subtable so we can just use the base_table for join
+                # this for flat features that were passed by reference
+                else:
+                    join_to = node['base_column'].dsm_table.base_table
+
+                join = join_tables(last_table, join_to, join_to_dsm_table)
+                if join not in joins:
+                    joins.append(join)
+
+                last_table = join_to    
+            
+
+        JOIN =  " ".join(joins)
+
+
 
         SELECT = ','.join(["`%s`.`%s`"%(c.column.table.name,c.name) for c in cols])
-        tables = set([c.column.table.name for c in cols])
         
-        FROM = tables.pop()
-        JOIN = ""
-        for t in tables:
-            JOIN += "JOIN `%s` on `%s`.`%s` = `%s`.`%s` " % (t, FROM, pk.name, t, pk.name)
+        FROM = self.base_table.name
 
         qry = """
-        SELECT {SELECT} from `{FROM}` {JOIN} GROUP BY `{FROM}`.`{primary_key}` ORDER BY `{FROM}`.`{primary_key}`
+        SELECT {SELECT}
+        FROM `{FROM}`
+        {JOIN}
         """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name) 
+        # GROUP BY `{FROM}`.`{primary_key}`
+        # ORDER BY `{FROM}`.`{primary_key}`
 
-        # print qry       
+        print qry       
         return qry
