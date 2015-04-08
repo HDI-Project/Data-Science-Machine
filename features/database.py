@@ -60,19 +60,10 @@ class Database:
                     related_columns.append(fk)
         return related_columns
 
-    def get_related_tables(self, table):
-        """
-        return a set of tables that reference table or are referenced by table
-        """
-        related_tables = set([])
-        for related in self.tables.values():
-            for fk in related.base_table.foreign_keys:
-                if fk.column.table == table.base_table:
-                    add = self.tables[fk.parent.table.name]
-                    related_tables.add(add)
 
-            for fk in table.base_table.foreign_keys:
-                add = self.tables[fk.column.table.name]
-                related_tables.add(add)                
+    def get_dsm_table(self, db_table):
+        for t in self.tables.values():
+            if db_table.name in t.tables:
+                return t
 
-        return related_tables
+        raise Exception("No dsm table with provied db table")

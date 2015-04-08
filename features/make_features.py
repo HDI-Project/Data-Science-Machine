@@ -24,10 +24,10 @@ def make_all_features(db, table, caller=None, depth=0):
         caller_name = caller.name
     print "*"*depth + 'making all features %s, caller= %s' % (table.name, caller_name)
 
-    for related in db.get_related_tables(table):
-        if table.name == "Projects" and related.name != "Resources":
-            print "skip " + related.name 
-            continue
+    for related in table.get_related_tables():
+        # if table.name == "Projects" and related.name != "Resources":
+        #     print "skip " + related.name 
+        #     continue
 
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:

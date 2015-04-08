@@ -2,6 +2,7 @@ import sqlalchemy.dialects.mysql.base as column_datatypes
 from datetime import timedelta
 from filters import FilterObject
 from feature import FeatureBase
+import threading
 
 import pdb
 
@@ -98,7 +99,7 @@ class AggFuncMySQL(AggFuncBase):
             WHERE {fk_join_on}
             """.format(**params)
             print qry
-            table.engine.execute(qry)
+            table.execute(qry)
 
 
         # check this logic
@@ -111,7 +112,10 @@ class AggFuncMySQL(AggFuncBase):
 
         last_target_table = None
         involved_cols = self.get_filter_cols() + [parent_fk_col]
+        count = 0
         for col in related_table.get_column_info():
+            print "loop 0", self.func, count
+            count += 1
             if not self.col_allowed(col, target_table=table):
                 continue
 
@@ -142,6 +146,7 @@ class AggFuncMySQL(AggFuncBase):
             })
             
             new_table_name,new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
+            
             if last_target_table == None:
                 last_target_table = new_table_name
 
@@ -163,6 +168,7 @@ class AggFuncMySQL(AggFuncBase):
 
             value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col_name)
             set_values.append(value)
+            print "loop 10"
 
 
         if len(set_values) > 0:
@@ -236,9 +242,9 @@ class AggCount(AggFuncBase):
 
         new_metadata.update({
             'path' : new_metadata['path'] + [path_add],
-            'numeric' : True,
-            'categorical' : False,
-            'real_name' :new_col
+
+
+
         })
 
         #if we are working with an interval filter, add interval number to new metadata
@@ -313,6 +319,9 @@ def make_intervals(db, fk):
     for f_obj in interval_filters:
         apply_funcs(db, fk, f_obj)
 
+def func_thread(func, db, f_obj, fk):
+    func(db, f_obj).apply(fk)
+
 def apply_funcs(db, fk, filter_obj=None):
     funcs = get_functions()
     related_table = db.tables[fk.parent.table.name]
@@ -320,14 +329,22 @@ def apply_funcs(db, fk, filter_obj=None):
 
     #TODO change these loops so the func is reinited so often
     #apply every function
+    threads = []
     for func in funcs:
         #apply
-        func(db,filter_obj).apply(fk)
+        # func(db,filter_obj).apply(fk)
 
-        for f_obj in filters:  
-            if filter_obj:  
-                f_obj = f_obj.AND(filter_obj)
-            func(db, f_obj).apply(fk)
+        t = threading.Thread(target=func_thread, args=(func, db, filter_obj, fk))
+        t.start()
+        threads.append(t)
+
+        # for f_obj in filters:  
+        #     if filter_obj:  
+        #         f_obj = f_obj.AND(filter_obj)
+        #     t= threading.Thread(target=worker).start()
+        #     threads.append(t)
+
+    [t.join() for t in threads]
         
 
 #agg oldest

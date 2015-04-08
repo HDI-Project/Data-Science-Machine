@@ -87,5 +87,5 @@ def model():
 
 
 if __name__ == "__main__":
-    db = database.Database.load("../features/Outcomes")
+    db = database.Database.load("../features/Projects")
     app.run(debug=True)

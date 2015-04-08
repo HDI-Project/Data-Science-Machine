@@ -10,6 +10,8 @@ from column import DSMColumn
 
 from collections import defaultdict
 
+import threading
+
 
 class DSMTable:
     MAX_COLS_TABLE = 200
@@ -34,6 +36,8 @@ class DSMTable:
         self.num_rows = self.engine.execute("SELECT count(*) from `%s`" % (self.name)).fetchall()[0][0]
 
         self.init_columns()
+
+        self.lock = threading.Lock()
 
     def __getstate__(self):
         """
@@ -104,7 +108,13 @@ class DSMTable:
         self.table_col_counts[self.curr_table.name] +=1
         return self.curr_table.name,name
 
+    def execute(self, qry):
 
+        try:
+            self.engine.execute(qry)
+        except Exception, e:
+            if e.message == "(OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')":
+                self.execute(qry)
 
     #############################
     # Database operations       #
@@ -115,15 +125,21 @@ class DSMTable:
 
         todo: suport where to add it
         """
+        print "waiting create"
+        self.lock.acquire()
+        print "aquired create"
         if (type(column_type) == DSMColumn):
             self.columns[(column_type.column.table.name,column_type.name)] = column_type
             print column_type.name, column_type.metadata["real_name"]
+            self.lock.release()
             return column_type.column.table.name,column_type.name
         
 
         table_name,column_name = self.make_column_name()
         self.cols_to_add[table_name] += [(column_name, column_type, metadata)]
         print column_name, metadata["real_name"]
+        self.lock.release()
+        print "relaed create"
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
 
@@ -138,6 +154,9 @@ class DSMTable:
             self.flush_columns(drop_if_exists=drop_if_exists)
 
     def flush_columns(self, drop_if_exists=True):
+        print "waiting flush"
+        self.lock.acquire()
+        print "acquired flush"
         #first, check which of cols_to_add need to be dropped first
         for table_name in self.cols_to_add:
             for (name, col_type, metadata) in self.cols_to_add[table_name]:
@@ -188,6 +207,8 @@ class DSMTable:
                         col = DSMColumn(c, dsm_table=self, metadata=new_col_metadata[c.name])
                         self.columns[(col.column.table.name,col.name)] = col
 
+        self.lock.release()
+        print "release flush"
 
     ###############################
     # Table info helper functions #
@@ -221,6 +242,41 @@ class DSMTable:
             return None
 
         return sorted(cols, key=lambda c: c.column.table.name)
+
+    def get_primary_key(self):
+        return self.get_column_info(match_func= lambda x: x.primary_key, first=True)
+
+    def get_parent_tables(self):
+        """
+        return set of tables that this table has foreign_key to
+        """
+        parent_tables = set([])
+
+        for fk in table.base_table.foreign_keys:
+            add = self.db.tables[fk.column.table.name]
+            parent_tables.add(add)                
+
+        return parent_tables
+
+    def get_child_tables(self):
+        """
+        return set of tables that have foreign_key to this table
+        """
+        child_tables = set([])
+        for related in self.db.tables.values():
+            for fk in related.base_table.foreign_keys:
+                if fk.column.table == table.base_table:
+                    add = self.db.tables[fk.parent.table.name]
+                    child_tables.add(add)
+
+        return child_tables
+
+    def get_related_tables(self):
+        """
+        return a set of tables that reference table or are referenced by table
+        """
+        related_tables = self.get_parent_tables() + self.get_child_tables()      
+        return related_tables
 
     def get_col_by_name(self, col_name):
         return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name, first=True)
@@ -271,6 +327,8 @@ class DSMTable:
         #         cat_cols.append(col)
 
         return cat_cols
+
+
 
     def get_num_distinct(self, cols):
         """
@@ -328,7 +386,15 @@ class DSMTable:
         
         this is done by sorting the columns by the longest paths          
         """
-        def join_tables(base_table, join_to, join_to_dsm_table):
+        def join_tables(base_table, join_to):
+            join_to_dsm_table = self.db.get_dsm_table(join_to)
+            if base_table == join_to_dsm_table.base_table:
+                pk = join_to_dsm_table.get_primary_key()
+                join_str = """
+                    JOIN `{join_to_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
+                    """.format(join_to_table=join_to.name, base_table=base_table.name, join_to_col=pk.column.name, base_col=pk.column.name )
+                return join_str
+
             for fk in base_table.foreign_keys:
                 if join_to_dsm_table.has_table(fk.column.table.name):
                     join_str = """
@@ -338,67 +404,53 @@ class DSMTable:
 
             pdb.set_trace()
                     
-
         if cols == None:
             cols = self.get_column_info()
-
-        pk = self.get_column_info(match_func= lambda x: x.primary_key, first=True)
-
-        # cols = set(cols)
-        # cols.add(pk) ##make sure we have pk to avoid ambiquity in the order by
 
         #todo, check to make sure all cols are legal
         sorted_cols = sorted(cols, key=lambda c: -len(c.metadata['path'])) #sort cols by longest path to shortest
 
 
+        #iterate over the cols, sorted by length of path, and generate the joins necessary to reach the feature
         joins = []
         for c in sorted_cols:
-            last_table = self.base_table
-
-            #case where there is no path because this feature is part of dsm_table
+            #case where column resides in this dsm table
             if c.metadata["path"] == []:
                 join_to = c.column.table
-                join_to_dsm_table = c.dsm_table
-                if join_to != last_table:
-                    join = join_tables(last_table, join_to,join_to_dsm_table)
+                #doesn't exist in the base_table so join necessary
+                if join_to != self.base_table:
+                    join = join_tables(last_table, join_to)
                     if join not in joins:
                         joins.append(join)
+            else:
+                last_table = self.base_table
+                reversed_path = reversed(c.metadata["path"])
+                for i, node in enumerate(reversed_path):
+                    if node["feature_type"] == "agg" or i+1 == len(c.metadata["path"]):
+                        join_to = c.column.table #if it is an agg feature or last node in path, we need to join to exact table
+                        join = join_tables(last_table, join_to)
+                        if join not in joins:
+                            joins.append(join)
+                        break
+                    else:
+                        join_to = node['base_column'].dsm_table.base_table
+                        join = join_tables(last_table, join_to)
+                        if join not in joins:
+                            joins.append(join)
 
-            for node in reversed(c.metadata["path"]):
-                if node['feature_type'] == "agg":
-                    continue
-                # this column resides in a sub table of dsm_table or not
-                join_to_dsm_table = node['base_column'].dsm_table
-                if node['base_column'].dsm_table.has_table(node['base_column'].column.table.name):
-                    join_to = node['base_column'].column.table
-
-                #column doesn't exists in a subtable so we can just use the base_table for join
-                # this for flat features that were passed by reference
-                else:
-                    join_to = node['base_column'].dsm_table.base_table
-
-                join = join_tables(last_table, join_to, join_to_dsm_table)
-                if join not in joins:
-                    joins.append(join)
-
-                last_table = join_to    
+                    last_table = join_to 
             
 
         JOIN =  " ".join(joins)
-
-
-
         SELECT = ','.join(["`%s`.`%s`"%(c.column.table.name,c.name) for c in cols])
-        
         FROM = self.base_table.name
+        pk = self.get_primary_key()
 
         qry = """
         SELECT {SELECT}
         FROM `{FROM}`
         {JOIN}
         """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name) 
-        # GROUP BY `{FROM}`.`{primary_key}`
-        # ORDER BY `{FROM}`.`{primary_key}`
 
-        print qry       
+        # print qry       
         return qry

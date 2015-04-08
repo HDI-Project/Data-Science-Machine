@@ -57,12 +57,19 @@ ALTER table Donors_1
     PARTITIONS 2;
 
  
-SELECT `Projects`.`total_price_including_optional_support`,
-		`Schools`.`school_county`
+UPDATE `Vendors_1` a
+            LEFT JOIN ( SELECT `rt`.`vendorid`, MIN(`item_quantity`) AS `Vendors_1__7`, MIN(`item_unit_price`) AS `Vendors_1__8`
+                   FROM (
+        SELECT `Resources`.`vendorid`,`Resources`.`item_quantity`,`Resources`.`item_unit_price`
+        FROM ``
+        
+        ) as rt
+                   
+                   GROUP BY `rt`.`vendorid`
+                ) b
+            ON `b`.`vendorid` = `a`.`vendorid`
+            SET `a`.`Vendors_1__7` = `b`.`Vendors_1__7`, `a`.`Vendors_1__8` = `b`.`Vendors_1__8`
+            WHERE `b`.`vendorid` = `a`.`vendorid`
 
-SELECT `Projects`.`total_price_including_optional_support`,`Schools`.`school_county`
-        FROM `Outcomes`
-        JOIN `Projects` on `Projects`.`projectid` = `Projects`.`id` 
-        GROUP BY `Schools`.`id`
-        ORDER BY `Schools`.`id`
+        
 

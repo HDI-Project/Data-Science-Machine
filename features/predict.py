@@ -211,8 +211,9 @@ if __name__ == "__main__":
     # database_name = 'northwind'
     # db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name)) 
 
-    table_name = "Products"
+    table_name = "Projects"
     db = Database.load(table_name)
+    print "db loaded"
     table = db.tables[table_name]
     # make_all_features(db, db.tables[table_name])
     find_all_correlations(db, db.tables[table_name])
