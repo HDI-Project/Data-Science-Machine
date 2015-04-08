@@ -11,6 +11,8 @@ from sklearn import linear_model
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.svm import SVR
 from sklearn.feature_selection import RFECV
+from sklearn.ensemble import RandomForestRegressor 
+
 import pdb
 
 
@@ -20,6 +22,9 @@ def get_predictable_features(table):
             return False
 
         if col.metadata["path"] and col.metadata["path"][-1]["feature_type"] == "flat":
+            return False
+
+        if len(col.get_distinct_vals()) < 2:
             return False
 
         return True
@@ -38,6 +43,9 @@ def get_usable_features(target_col):
             return False
 
         if col == target_col:
+            return False
+
+        if len(col.get_distinct_vals()) < 2:
             return False
 
         return True
@@ -98,15 +106,16 @@ def model(target_col, feature_cols):
 def best_model(target_col):
     predict_cols = get_usable_features(target_col)
     rows, y = make_data(target_col, predict_cols)
-
     estimator = SVR(kernel='linear')
     clf = Pipeline([
             ('vect', DictVectorizer(sparse=False)),
             ('scaler', preprocessing.StandardScaler()),
-            ('selector', RFECV(estimator, step=1, cv=3, scoring='r2')),
+            ('selector', RandomForestRegressor(n_estimators=10, n_jobs=-1, max_depth=None,  min_samples_split=1, random_state=0)),
+            # ('selector', RFECV(estimator, step=1, cv=3, scoring='r2')),
     ])
 
     clf.fit(rows,y)
+    pdb.set_trace()
 
     names = clf.named_steps['vect'].get_feature_names()
     support = clf.named_steps['selector'].support_ 
@@ -212,7 +221,8 @@ if __name__ == "__main__":
     # db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name)) 
 
     table_name = "Projects"
-    db = Database.load(table_name)
+    print "models/%s"%table_name
+    db = Database.load("models/%s"%table_name)
     print "db loaded"
     table = db.tables[table_name]
     # make_all_features(db, db.tables[table_name])
