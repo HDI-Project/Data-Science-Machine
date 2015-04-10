@@ -194,6 +194,11 @@ class AggStd(AggFuncMySQL):
     func = "std"
     disallowed = set([('agg', 'std')])
 
+class AggAvg(AggFuncMySQL):
+    name = "Avg"
+    func = "avg"
+    disallowed = set([])
+
 
 class AggCount(AggFuncBase):
     name ="AggCount"
@@ -349,4 +354,4 @@ def apply_funcs(db, fk, filter_obj=None):
 
 #agg oldest
 def get_functions():
-    return [AggCount, AggMax, AggSum, AggStd, AggMin]
+    return [AggCount, AggMax, AggSum, AggStd, AggMin, AggAvg]
