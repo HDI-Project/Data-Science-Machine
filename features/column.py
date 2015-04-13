@@ -24,6 +24,16 @@ class DSMColumn(object):
     def __repr__(self):
         return "[COLUMN `%s`.`%s`]"%(self.column.table.name,self.metadata['real_name'])
 
+    def __getstate__(self):
+        """
+        prepare class for pickling
+        """
+        state = self.__dict__.copy()
+        if 'distinct_vals' in state['metadata']:
+            del state['metadata']['distinct_vals']
+            
+        return state
+
     def update_metadata(self, update):
         self.metadata.update(update)
 

@@ -9,7 +9,6 @@ import numpy as np
 import agg_functions
 import flat_functions
 import datetime
-import threading
 #############################
 # Table feature functions  #
 #############################
@@ -25,7 +24,6 @@ def make_all_features(db, table, caller=None, depth=0):
         caller_name = caller.name
     print "*"*depth + 'making all features %s, caller= %s' % (table.name, caller_name)
 
-    threads = []
     for related in table.get_related_tables():
         # if table.name == "Projects" and related.name != "Resources":
         #     print "skip " + related.name 
@@ -33,12 +31,7 @@ def make_all_features(db, table, caller=None, depth=0):
 
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
-            t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(caller=table, depth=depth+1))
-            # make_all_features(db, related, caller=table, depth=depth+1)
-            t.start()
-            threads.append(t)
-
-    [t.join() for t in threads]
+            make_all_features(db, related, caller=table, depth=depth+1)
 
 
     print "*"*depth +  'making agg features %s, caller= %s' % (table.name, caller_name)
@@ -104,8 +97,6 @@ if __name__ == "__main__":
             db.engine.execute("drop table %s" % t)
         except Exception, e:
             print e
-    #reloaded db after dropping tables
-    db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
     table = db.tables[table_name]
     make_all_features(db, table)
     db.save(table_name)

@@ -1,0 +1,48 @@
+{% extends "analysis-base.html" %}
+{% block title %}Cluster{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style type="text/css">
+    #graph-container{
+    	position: relative;
+    	height:600px;
+    }
+
+    #loader-container{
+    	background-color: #f4cccc;
+    	margin: 197px auto;
+		padding: 25px;
+		border-radius: 8px;
+		width: 150px;
+		height: 150px;
+    }
+
+    #graph{
+    	position: absolute;    	
+    }
+
+    
+
+  </style>
+  <script type="text/javascript">
+  	var features = {{features_str | safe}}
+  </script>
+  <link href="//cdnjs.cloudflare.com/ajax/libs/select2/4.0.0-rc.2/css/select2.min.css" rel="stylesheet" />
+<script src="//cdnjs.cloudflare.com/ajax/libs/select2/4.0.0-rc.2/js/select2.min.js"></script>
+<script src="http://code.highcharts.com/highcharts.js"></script>
+  <script src="/static/cluster.js"></script>
+	<!-- <link rel="stylesheet" href="/static/base.css"> -->
+{% endblock %}
+{% block analysis_content %}
+	<div class="row">
+		Number of clusters: <input id="k-clusters" type="text" value="5"> <button id="go-cluster" class="btn btn-primary">Go</button>
+	</div>
+	<div class="row">
+		<div id="graph-container" class="col-md12">
+			<div id="loader-container" class="hidden">
+				<div class="loader"></div>
+			</div>
+			<div id="graph"></div>
+		</div>
+	</div>
+{% endblock %}

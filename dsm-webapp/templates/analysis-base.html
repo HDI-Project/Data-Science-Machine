@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+  	<div class="row">
+	  	<div class="col-md-12">
+	  		<h2 id="entity-header" data-entity-name="{{entity_name}}" class="page-header">Entity Analysis: {{entity_name}}</h2>
+	  	</div>
+	</div>
+
+	{% block analysis_content %} {% endblock %}
+</div>
+
+{% endblock %}
+

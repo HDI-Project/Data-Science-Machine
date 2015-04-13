@@ -10,7 +10,7 @@ import dill
 class Database:
     def __init__(self, url):
         self.url = url
-        self.engine = create_engine(url)
+        self.engine = self.make_engine(url)
         self.metadata = MetaData(bind=self.engine)
         self.metadata.reflect()
         self.tables  = dict([(t.name, DSMTable(t, self)) for t in self.metadata.sorted_tables])
@@ -29,7 +29,8 @@ class Database:
 
     def __setstate__(self, state):
         #unpickle db state
-        state['engine'] = create_engine(state['url'])
+        # pdb.set_trace()
+        state['engine'] = self.make_engine(state['url'])
         state['metadata'] = MetaData(bind=state['engine']).reflect()
         self.__dict__.update(state) #update now so we have these properties when we call set_db
 
@@ -48,6 +49,9 @@ class Database:
         db = dill.load( open( filename, "rb" ) )
         print db
         return db
+
+    def make_engine(self, url):
+        return create_engine(url, pool_size=20)
 
     def get_related_fks(self, table):
         """

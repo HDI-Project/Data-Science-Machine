@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Analyze{% endblock %}
+{% extends "analysis-base.html" %}
+{% block title %}Analysis - Model{% endblock %}
 {% block head %}
   {{ super() }}
   <style type="text/css">
@@ -42,7 +42,7 @@
   <script src="/static/analyze.js"></script>
 	<!-- <link rel="stylesheet" href="/static/base.css"> -->
 {% endblock %}
-{% block content %}
+{% block analysis_content %}
 	<div id="intro-modal" class="modal fade">
 	  <div class="modal-dialog">
 	    <div class="modal-content">
@@ -83,12 +83,6 @@
 	</div><!-- /.modal -->
 
 
-  <div class="container">
-  	<div class="row">
-	  	<div class="col-md-12">
-	  		<h2 id="entity-header" data-entity-name="{{entity_name}}" class="page-header">Entity Analysis: {{entity_name}}</h2>
-	  	</div>
-	</div>
   	<div class="row">
   		<div class="col-md-3">
 			<div class="panel panel-default">
@@ -202,5 +196,4 @@
 
 
   	</div>
-  </div>
 {% endblock %}

@@ -115,6 +115,8 @@ class DSMTable:
         except Exception, e:
             if e.message == "(OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')":
                 self.execute(qry)
+            else:
+                print e
 
     #############################
     # Database operations       #
@@ -125,9 +127,7 @@ class DSMTable:
 
         todo: suport where to add it
         """
-        print "waiting create"
         self.lock.acquire()
-        print "aquired create"
         if (type(column_type) == DSMColumn):
             self.columns[(column_type.column.table.name,column_type.name)] = column_type
             print column_type.name, column_type.metadata["real_name"]
@@ -139,7 +139,6 @@ class DSMTable:
         self.cols_to_add[table_name] += [(column_name, column_type, metadata)]
         print column_name, metadata["real_name"]
         self.lock.release()
-        print "relaed create"
         if flush:
             self.flush_columns(drop_if_exists=drop_if_exists)
 
@@ -154,9 +153,7 @@ class DSMTable:
             self.flush_columns(drop_if_exists=drop_if_exists)
 
     def flush_columns(self, drop_if_exists=True):
-        print "waiting flush"
         self.lock.acquire()
-        print "acquired flush"
         #first, check which of cols_to_add need to be dropped first
         for table_name in self.cols_to_add:
             for (name, col_type, metadata) in self.cols_to_add[table_name]:
@@ -208,7 +205,6 @@ class DSMTable:
                         self.columns[(col.column.table.name,col.name)] = col
 
         self.lock.release()
-        print "release flush"
 
     ###############################
     # Table info helper functions #
@@ -252,7 +248,7 @@ class DSMTable:
         """
         parent_tables = set([])
 
-        for fk in table.base_table.foreign_keys:
+        for fk in self.base_table.foreign_keys:
             add = self.db.tables[fk.column.table.name]
             parent_tables.add(add)                
 
@@ -265,7 +261,7 @@ class DSMTable:
         child_tables = set([])
         for related in self.db.tables.values():
             for fk in related.base_table.foreign_keys:
-                if fk.column.table == table.base_table:
+                if fk.column.table == self.base_table:
                     add = self.db.tables[fk.parent.table.name]
                     child_tables.add(add)
 
@@ -275,8 +271,9 @@ class DSMTable:
         """
         return a set of tables that reference table or are referenced by table
         """
-        related_tables = self.get_parent_tables() + self.get_child_tables()      
-        return related_tables
+        children = self.get_child_tables()
+        parents = self.get_parent_tables()
+        return parents.union(children)
 
     def get_col_by_name(self, col_name):
         return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name, first=True)
@@ -349,15 +346,14 @@ class DSMTable:
 
         return zip(cols,counts)
 
-    def get_rows(self, cols):
+    def get_rows(self, cols, limit=None):
         """
         return rows with values for the columns specificed by col
-
-        TODO: use make_full_table_stmt
         """
 
 
-        qry = self.make_full_table_stmt(cols)
+        qry = self.make_full_table_stmt(cols, limit=limit)
+        print qry
         rows = self.engine.execute(qry)
         return rows
 
@@ -374,7 +370,7 @@ class DSMTable:
     ###############################
     # Query helper functions      #
     ###############################
-    def make_full_table_stmt(self, cols=None):
+    def make_full_table_stmt(self, cols=None, limit=None):
         """
         given a set of colums, make a select statement that generates a table where these columns can be selected from.
         return the string of the query to do this
@@ -402,7 +398,7 @@ class DSMTable:
                     """.format(join_to_table=join_to.name, base_table=base_table.name, join_to_col=fk.column.name, base_col=fk.parent.name )
                     return join_str
 
-            pdb.set_trace()
+            print "ERROR: ", base_table, join_to
                     
         if cols == None:
             cols = self.get_column_info()
@@ -446,11 +442,17 @@ class DSMTable:
         FROM = self.base_table.name
         pk = self.get_primary_key()
 
+        if limit != None:
+            LIMIT = "LIMIT %d" % limit
+        else:
+            LIMIT = ""
+
         qry = """
         SELECT {SELECT}
         FROM `{FROM}`
         {JOIN}
-        """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name) 
+        {LIMIT}
+        """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name, LIMIT=LIMIT) 
 
         # print qry       
         return qry

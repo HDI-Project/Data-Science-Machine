@@ -114,7 +114,6 @@ class AggFuncMySQL(AggFuncBase):
         involved_cols = self.get_filter_cols() + [parent_fk_col]
         count = 0
         for col in related_table.get_column_info():
-            print "loop 0", self.func, count
             count += 1
             if not self.col_allowed(col, target_table=table):
                 continue
@@ -168,7 +167,6 @@ class AggFuncMySQL(AggFuncBase):
 
             value = "`a`.`{new_col}` = `b`.`{new_col}`".format(new_col=new_col_name)
             set_values.append(value)
-            print "loop 10"
 
 
         if len(set_values) > 0:
@@ -182,12 +180,12 @@ class AggSum(AggFuncMySQL):
 class AggMax(AggFuncMySQL):
     name = "Max"
     func = "max"
-    disallowed = set([])
+    disallowed = set([('agg', 'min')])
 
 class AggMin(AggFuncMySQL):
     name = "Min"
     func = "min"
-    disallowed = set([])
+    disallowed = set([('agg', 'max')])
 
 class AggStd(AggFuncMySQL):
     name = "Std"
@@ -207,7 +205,6 @@ class AggCount(AggFuncBase):
         """
         returns true if this agg function can be applied to this col. otherwise returns false
         """
-
         if not super(AggFuncMySQL, self).col_allowed(col, target_table=target_table):
             return False
         return True
@@ -221,7 +218,6 @@ class AggCount(AggFuncBase):
         return new_col
 
     def apply(self, fk):
-        
         # check this logic
         table = self.db.tables[fk.column.table.name]
         related_table = self.db.tables[fk.parent.table.name]
@@ -233,7 +229,7 @@ class AggCount(AggFuncBase):
         else:
             fk_name = fk.parent.table.name
 
-        new_col = self.make_real_name(fk_name)
+        real_name = self.make_real_name(fk_name)
 
         col = related_table.columns[(fk.parent.table.name,fk.parent.name)]
         
@@ -246,10 +242,8 @@ class AggCount(AggFuncBase):
         }
 
         new_metadata.update({
+            'real_name' : real_name,
             'path' : new_metadata['path'] + [path_add],
-
-
-
         })
 
         #if we are working with an interval filter, add interval number to new metadata
@@ -281,9 +275,7 @@ class AggCount(AggFuncBase):
         SET `target_table`.`{new_col_name}` = `b`.count
         where {fk_join_on}
         """.format(**params)
-        print qry
         table.engine.execute(qry)
-        print "done"
 
 
 def make_interval_filters(col, n_intervals, delta):
