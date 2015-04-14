@@ -64,11 +64,17 @@ class DSMTable:
         for col in self.base_table.c:
             col = DSMColumn(col, dsm_table=self)
 
+            categorical = len(col.get_distinct_vals())<=2
+
+
             col.update_metadata({
                 'numeric' : type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key),
                 'real_name' : col.name,
-                'categorical' : False
+                'categorical' : categorical
             })
+
+            if categorical:
+                print "cat column", col.metadata["real_name"], self.name
 
             self.columns[(col.column.table.name,col.name)] = col
 
@@ -303,8 +309,8 @@ class DSMTable:
 
     def get_categorical(self, max_proportion_unique=.3, min_proportion_unique=0, max_num_unique=10):
         cat_cols = self.get_column_info(match_func=lambda x: x.metadata["categorical"] == True)
-        if len(cat_cols) >0:
-            pdb.set_trace()
+        # if len(cat_cols) >0:
+        #     pdb.set_trace()
         # counts = self.get_num_distinct(cols)
         
         # qry = """
@@ -340,9 +346,7 @@ class DSMTable:
         SELECT {SELECT} from {FROM}
         """.format(SELECT=SELECT, FROM=FROM)
 
-        print qry
         counts = self.engine.execute(qry).fetchall()[0]
-        print 'done'
 
         return zip(cols,counts)
 
@@ -353,7 +357,6 @@ class DSMTable:
 
 
         qry = self.make_full_table_stmt(cols, limit=limit)
-        print qry
         rows = self.engine.execute(qry)
         return rows
 
