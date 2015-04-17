@@ -37,6 +37,8 @@ class DSMTable:
 
         self.init_columns()
 
+        self.one_to_one = {}
+
         self.lock = threading.Lock()
 
     def __getstate__(self):
@@ -64,19 +66,18 @@ class DSMTable:
         for col in self.base_table.c:
             col = DSMColumn(col, dsm_table=self)
 
-            categorical = len(col.get_distinct_vals())<=2
-
-
             col.update_metadata({
                 'numeric' : type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key),
                 'real_name' : col.name,
-                'categorical' : categorical
+                'categorical' : False
             })
 
-            if categorical:
-                print "cat column", col.metadata["real_name"], self.name
-
             self.columns[(col.column.table.name,col.name)] = col
+
+        #set categorical columns
+        for col, count in self.get_num_distinct(self.get_column_info()):
+            if count <= 2:
+                col.metadata["categorical"] = True
 
     def make_new_table(self):
         self.num_added_tables += 1
@@ -117,12 +118,15 @@ class DSMTable:
     def execute(self, qry):
 
         try:
-            self.engine.execute(qry)
+            res = self.engine.execute(qry)
         except Exception, e:
             if e.message == "(OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')":
-                self.execute(qry)
+                print e
+                res = self.execute(qry)
             else:
                 print e
+
+        return res
 
     #############################
     # Database operations       #
@@ -255,7 +259,7 @@ class DSMTable:
         parent_tables = set([])
 
         for fk in self.base_table.foreign_keys:
-            add = self.db.tables[fk.column.table.name]
+            add = (self.db.tables[fk.column.table.name], fk)
             parent_tables.add(add)                
 
         return parent_tables
@@ -268,7 +272,7 @@ class DSMTable:
         for related in self.db.tables.values():
             for fk in related.base_table.foreign_keys:
                 if fk.column.table == self.base_table:
-                    add = self.db.tables[fk.parent.table.name]
+                    add = (self.db.tables[fk.parent.table.name], fk)
                     child_tables.add(add)
 
         return child_tables
@@ -281,8 +285,35 @@ class DSMTable:
         parents = self.get_parent_tables()
         return parents.union(children)
 
+    def is_one_to_one(self, related, fk):
+        #check one to one cache for either table to avoid requerying
+        if related in self.one_to_one:
+            return self.one_to_one[related] 
+        if self in related.one_to_one:
+            return related.one_to_one[self] 
+
+
+
+        related_pk =related.get_primary_key()
+        pk = self.get_primary_key()
+
+        qry = """
+         SELECT distinct(count(`{related_table_name}`.`{related_pk_name}`))
+         FROM `{table_name}`
+         JOIN `{related_table_name}` ON `{table_name}`.`{fk_parent}` = `{related_table_name}`.`{fk_child}`
+         GROUP BY `{table_name}`.`{table_pk_name}`;
+        """.format(related_table_name=related.name, related_pk_name=related_pk.column.name, table_name=self.name, table_pk_name=pk.column.name, fk_parent=fk.column.name, fk_child=fk.parent.name)
+
+        distinct = list(self.execute(qry))
+
+        self.one_to_one[related] = len(distinct) == 1 and distinct[0][0] == 1
+        return self.one_to_one[related]
+
     def get_col_by_name(self, col_name):
-        return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name, first=True)
+        """
+        get first column that matches either real name or database name of col_name
+        """
+        return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name or c.metadata["real_name"]==col_name, first=True)
 
     def names_to_cols(self, names):
         return [self.get_col_by_name(n) for n in names]
@@ -385,21 +416,35 @@ class DSMTable:
         
         this is done by sorting the columns by the longest paths          
         """
-        def join_tables(base_table, join_to):
+        def join_tables(base_table, join_to, inverse=False):
+            # print base_table.name, join_to.name
+            # pdb.set_trace()
             join_to_dsm_table = self.db.get_dsm_table(join_to)
             if base_table == join_to_dsm_table.base_table:
                 pk = join_to_dsm_table.get_primary_key()
                 join_str = """
-                    JOIN `{join_to_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
+                    LEFT JOIN `{join_to_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
                     """.format(join_to_table=join_to.name, base_table=base_table.name, join_to_col=pk.column.name, base_col=pk.column.name )
                 return join_str
 
             for fk in base_table.foreign_keys:
                 if join_to_dsm_table.has_table(fk.column.table.name):
                     join_str = """
-                    JOIN `{join_to_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
+                    LEFT JOIN `{join_to_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
                     """.format(join_to_table=join_to.name, base_table=base_table.name, join_to_col=fk.column.name, base_col=fk.parent.name )
                     return join_str
+
+            #todo decide if this is the best way to handle one to one
+            base_table, join_to = join_to, base_table
+            join_to_dsm_table = self.db.get_dsm_table(join_to)
+            for fk in base_table.foreign_keys:
+                if join_to_dsm_table.has_table(fk.column.table.name):
+                    join_str = """
+                    LEFT JOIN `{base_table}` ON `{join_to_table}`.`{join_to_col}` = `{base_table}`.`{base_col}`
+                    """.format(join_to_table=join_to.name, base_table=base_table.name, join_to_col=fk.column.name, base_col=fk.parent.name )
+                    return join_str
+
+            # inverse = join_tables(join_to, base_table, inverse=True)
 
             print "ERROR: ", base_table, join_to
                     
@@ -412,6 +457,7 @@ class DSMTable:
 
         #iterate over the cols, sorted by length of path, and generate the joins necessary to reach the feature
         joins = []
+        # pdb.set_trace()
         for c in sorted_cols:
             #case where column resides in this dsm table
             if c.metadata["path"] == []:
@@ -439,7 +485,6 @@ class DSMTable:
 
                     last_table = join_to 
             
-
         JOIN =  " ".join(joins)
         SELECT = ','.join(["`%s`.`%s`"%(c.column.table.name,c.name) for c in cols])
         FROM = self.base_table.name
