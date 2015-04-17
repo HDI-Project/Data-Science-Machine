@@ -27,24 +27,35 @@ def make_all_features(db, table, caller=None, depth=0):
     print "*"*depth + 'making all features %s, caller= %s' % (table.name, caller_name)
 
     threads = []
-    for related,fk in table.get_related_tables():
-        # if table.name == "Projects" and related.name != "Resources":
-        #     print "skip " + related.name 
-        #     continue
-
+    for related,fk in table.get_child_tables():
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
             t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(caller=table, depth=depth+1))
             # make_all_features(db, related, caller=table, depth=depth+1)
             t.start()
             threads.append(t)
-
     [t.join() for t in threads]
 
     print "*"*depth +  'making agg features %s, caller= %s' % (table.name, caller_name)
     make_agg_features(db, table, caller, depth)
+
     print "*"*depth +  'making row features %s' % (table.name)
     make_row_features(db, table, caller, depth)
+    print "*"*depth +  'making one_to_one features %s' % (table.name)
+    make_one_to_one_features(db, table, caller, depth)
+
+
+    threads = []
+    for related,fk in table.get_parent_tables():
+        #dont make_all on the caller and dont make all on yourself
+        if related != caller and related != table:
+            t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(caller=table, depth=depth+1))
+            # make_all_features(db, related, caller=table, depth=depth+1)
+            t.start()
+            threads.append(t)
+    [t.join() for t in threads]
+
+
     print "*"*depth +  'making flat features %s, caller= %s' % (table.name, caller_name)
     make_flat_features(db, table, caller, depth)
 
@@ -84,6 +95,11 @@ def make_flat_features(db, table, caller, depth):
         
         flat.apply(fk)
 
+#############################
+# Flat feature    #
+#############################
+def make_one_to_one_features(db, table, caller, depth):
+    flat = flat_functions.FlatFeature(db)
     for related, fk in table.get_child_tables():
         if table.is_one_to_one(related, fk):
             one_to_one_table = db.tables[fk.parent.table.name]
