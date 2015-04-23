@@ -15,26 +15,45 @@ import threading
 # Table feature functions  #
 #############################
 
-#["count", "sum", 'avg', 'std', 'max', 'min']
+"""
+Make all feature of child tables
+
+Make all agg features. Agg features are aggregate functions applied to child tables, so we must make those feature first, which we have donorschoose
+
+Make row features. 
+
+Make one to one features
+
+Make a all features for parent tables. Parent tables use features of this table, so we must have calcualted agg, row, and one to one features.
+
+Make flat features. Flat features pull from table features, so we must have made all feature for parent tables, which he have
+
+"""
 
 
 MAX_FUNC_TO_APPLY = 2
 
-def make_all_features(db, table, caller=None, depth=0):
+def make_all_features(db, table, caller=None, path=[], depth=0):
     caller_name = 'no caller'
     if caller:
         caller_name = caller.name
-    print "*"*depth + 'making all features %s, caller= %s' % (table.name, caller_name)
+    print "*"*depth + 'making all features %s, path= %s' % (table.name, str(path))
+
+    #found a cycle
+    new_path = list(path) + [table]
+    if len(path) != len(set(path)):
+        return
 
     threads = []
     for related,fk in table.get_child_tables():
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
-            t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(caller=table, depth=depth+1))
+            t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(path=new_path, caller=table, depth=depth+1))
             # make_all_features(db, related, caller=table, depth=depth+1)
             t.start()
-            threads.append(t)
-    [t.join() for t in threads]
+            t.join()
+            # threads.append(t)
+    # [t.join() for t in threads]
 
     print "*"*depth +  'making agg features %s, caller= %s' % (table.name, caller_name)
     make_agg_features(db, table, caller, depth)
@@ -49,11 +68,12 @@ def make_all_features(db, table, caller=None, depth=0):
     for related,fk in table.get_parent_tables():
         #dont make_all on the caller and dont make all on yourself
         if related != caller and related != table:
-            t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(caller=table, depth=depth+1))
+            t = threading.Thread(target=make_all_features, args=(db, related), kwargs=dict(path=new_path, caller=table, depth=depth+1))
             # make_all_features(db, related, caller=table, depth=depth+1)
             t.start()
-            threads.append(t)
-    [t.join() for t in threads]
+            t.join()
+            # threads.append(t)
+    # [t.join() for t in threads]
 
 
     print "*"*depth +  'making flat features %s, caller= %s' % (table.name, caller_name)
@@ -125,7 +145,17 @@ if __name__ == "__main__":
     # os.system("mysql -t < ../Northwind.MySQL5.sql")
     # # # os.system("mysql -t < ../allstate/allstate.sql")
 
-    # database_name = 'northwind'
+    # database_name = 'ijcai'
+    # table_name = "Outcomes"
+    # url = 'mysql+mysqldb://kanter@localhost/%s' % (database_name)
+    # engine = create_engine(url)
+    # for t in ["Behaviors_1", "Outcomes_1","Items_1", "Categorys_1", "Merchants_1","Brands_1", "Actions_1", "Users_1"]:
+    #     try:
+    #         qry = "drop table %s" % t
+    #         engine.execute(qry)
+    #     except Exception, e:
+    #         print e
+
     database_name = 'donorschoose'
     table_name = "Projects"
     url = 'mysql+mysqldb://kanter@localhost/%s' % (database_name)
@@ -136,18 +166,21 @@ if __name__ == "__main__":
             engine.execute(qry)
         except Exception, e:
             print e
+
+
+
     #reloaded db after dropping tables
     db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
     table = db.tables[table_name]
     make_all_features(db, table)
-    db.save("models/"+table_name)
+    save_name = "models/"+database_name + "__" + table_name
+    db.save(save_name)
 
     
-    db = Database.load("models/"+table_name)
+    db = Database.load(save_name)
     table = db.tables[table_name]
 
-    # profile.run('make_all_features(db, table)')
     debug.export_col_names(table)
 
     # debug.print_cols_names(db.tables['Orders'])
-#beaumont
+

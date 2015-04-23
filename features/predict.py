@@ -1,4 +1,7 @@
 from make_features import make_all_features
+from filters import FilterObject
+
+
 from database import Database
 import numpy as np
 from sklearn import tree
@@ -9,9 +12,10 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn import preprocessing
 from sklearn import linear_model
 from sklearn.feature_extraction import DictVectorizer
-from sklearn.svm import SVR, LinearSVR, LinearSVC
+from sklearn.svm import SVR, LinearSVR, LinearSVC, SVC
+from sklearn.feature_selection import SelectKBest, f_classif, VarianceThreshold
 from sklearn.feature_selection import RFECV
-from sklearn.ensemble import RandomForestRegressor 
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
 import random
 from sklearn.cluster import MiniBatchKMeans
 from time import time
@@ -21,19 +25,26 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import roc_auc_score
 from sklearn.cross_validation import train_test_split
+from itertools import izip
+from scipy import sparse
+from sklearn.externals import joblib
 import pdb
 
 
-def get_predictable_features(table):
-    def match_func(col):
+def get_predictable_features(table, exlucde=[]):
+    def match_func(col, exlucde=exlucde):
         if not (col.metadata['numeric'] or col.metadata['categorical']):
+            return False
+        # path_tables = set([p['base_column'].dsm_table.name for p in col.metadata['path']])
+        # pdb.set_trace()
+        if col.metadata["path"] and col.metadata["path"][-1]['base_column'].dsm_table.name in exlucde > 0:
             return False
 
         # if col.metadata["path"] and col.metadata["path"][-1]["feature_type"] == "flat":
         #     return False
 
-        if len(col.get_distinct_vals()) < 2:
-            return False
+        # if len(col.get_distinct_vals()) < 2:
+        #     return False
 
         return True
 
@@ -60,78 +71,72 @@ def get_usable_features(target_col):
 
     return target_col.dsm_table.get_column_info(match_func=match_func)
 
-def make_data(target_col, feature_cols):
+def make_data(target_col, feature_cols, id_col, filter_obj=None):
+    """
+    todo: make this one query
+    """
     table = target_col.dsm_table
-    # print "feature_cols 1", feature_cols
-    rows = table.get_rows_as_dict(feature_cols) 
-    for row in rows:
-        for col in row:
-            if row[col] == None:
-                row[col] = 0
 
+    id_col_vals = []
     y = []
-    for r in table.get_rows_as_dict([target_col]):
-        r = r[target_col.name] #skip primary key
+    rows = []
+    for r in table.get_rows([target_col, id_col]+feature_cols, filter_obj=filter_obj):
+        y_add = r[0]
+        id_add = r[1]
         # print r
-        if r == None:
-            r = 0 
+        if y_add == None:
+            y_add = 0 
 
-        y.append(float(r)) 
+        y.append(float(y_add)) 
+        id_col_vals.append(id_add) 
+        rows.append(r[2:])
 
+    rows = np.array(rows,  dtype=float)
     num = 10000
-    return rows,y
+    return rows,y, id_col_vals
     # return rows[:num], y[:num]
 
-def split_data(x,y):
-    return train_test_split(x,y, test_size=.5)
+def split_data(x,y, ids, test_ids_file, id_type=int):
+    """
+    splits training/test data according to the list of ids in test_ids_file
+    """
 
+    with open(test_ids_file) as f:
+        test_id_set = set(map(id_type,f.read().splitlines()))
 
-def model(target_col, feature_cols):
-    print "make model", len(feature_cols)
-    rows, y = make_data(target_col, feature_cols)
-
-    if target_col.metadata["categorical"]:
-        clf = linear_model.SGDClassifier(loss="log")
-    else:
-        clf = LinearSVR()
-
-    data_pipeline = Pipeline([
-            ('vect', DictVectorizer()),
-            ('scaler', preprocessing.StandardScaler(with_mean=False)),
-    ])
-
-    # print "fit"
-
-    X = data_pipeline.fit_transform(rows)
-
-    train_x, test_x, train_y, test_y = split_data(X,y)
-
-    clf.fit(train_x, train_y)
     
-    if target_col.metadata["categorical"]:
-        if clf.classes_[0] == 1:
-            pos_idx = 0
-        elif clf.classes_[1] == 1:
-            pos_idx = 1
+    y = np.array(y)
+    ids = np.array(ids)
 
-        probs = clf.predict_proba(test_x)[:,pos_idx]
-        score = roc_auc_score(test_y, probs)
-        print score
-    else:
-        score = clf.score(X, y)
-    # print "done fit and score"
-    names = target_col.dsm_table.names_to_cols(data_pipeline.named_steps['vect'].get_feature_names())
-    weights = clf.coef_
+    test_idx = []
+    train_idx = []
+    for idx, curr_id in enumerate(ids):
+        if curr_id in test_id_set:
+            test_idx.append(idx)
+        else:
+            train_idx.append(idx)
 
-    # print names
-    # print weights
-    using = zip(names, weights)
-    # using = zip(using,clf.named_steps['regression'].coef_)
+    train_x = x[train_idx]
+    test_x = x[test_idx]
+    train_y = y[train_idx]
+    test_y = y[test_idx]
+    train_ids = ids[train_idx]
+    test_ids = ids[test_idx]
 
-    print score, "\n\n", using
-    pdb.set_trace()
+    # pdb.set_trace()
+    return train_x, test_x, train_y, test_y, train_ids, test_ids
 
-    return score, using
+def write_predictions(outfile, row_ids, probs, header=None, convert_id_func=None):
+    with open(outfile, "w") as out:
+        if header:
+            out.write(header+ "\n")
+        if convert_id_func != None:
+            row_ids = convert_id_func(row_ids)
+
+        for row_id, prob in izip(row_ids, probs):
+            out.write(str(row_id) + "," + str(prob) + "\n")
+
+
 
 
 
@@ -189,12 +194,13 @@ def cluster_labels(X, k, scale_data=True):
 
 def cluster(entity,k,cols=None):
     if cols == None:
+
         cols = entity.get_column_info(match_func=lambda col: col.metadata['numeric'])
     cols = np.array(cols)
 
     data = entity.get_rows(cols, limit=1000)
     X = [d for d in data]
-    
+    X = np.where(X == np.array(None), 0, X)
     labels, X_scaled = cluster_labels(X, k)
     # pdb.set_trace()
     
@@ -206,8 +212,8 @@ def cluster(entity,k,cols=None):
         predict_labels[labels != l] = 0
         
         clf = LinearSVR()
-        clf.fit(X, predict_labels)
-        score = clf.score(X, predict_labels)
+        clf.fit(X_scaled, predict_labels)
+        score = clf.score(X_scaled, predict_labels)
         weights = clf.coef_
         weights = [abs(w) for w in weights]
         thresh = np.mean(weights) + np.std(weights)*3
@@ -219,9 +225,10 @@ def cluster(entity,k,cols=None):
     
         important_features[str(l)].sort(key=lambda x: -abs(x[1]))
 
-    reduced_data = PCA(n_components=2).fit_transform(X)
-    # tsne = TSNE(n_components=2, random_state=0,verbose=1)
-    # reduced_data = tsne.fit_transform(reduced_data) 
+    # reduced_data = PCA(n_components=2).fit_transform(X_scaled)
+    reduced_data = PCA(n_components=50).fit_transform(X_scaled)
+    tsne = TSNE(n_components=2, random_state=0,verbose=1)
+    reduced_data = tsne.fit_transform(reduced_data) 
     # kmeans = MiniBatchKMeans(init='k-means++', n_clusters=k, n_init=10)
     # labels = kmeans.fit_predict(reduced_data)
 
@@ -233,65 +240,6 @@ def cluster(entity,k,cols=None):
         clusters[label].append(list(pt))
 
     return clusters, important_features
-
-
-
-class IntegerEncoder():
-    def __init__(self, categorical_features=[]):
-        self.categorical_features = categorical_features
-        self.col_mappings = dict([(i,{}) for i in categorical_features])
-        self.col_counts = dict([(i,1) for i in categorical_features]) #0 reserved for unseen values
-
-    def fit(self,X, y=None):
-        new_X = []
-        for row in X:
-            new_row = []
-            count = 0
-            # pdb.set_trace()
-            for col_num, element in enumerate(row):
-                if col_num not in self.categorical_features:
-                    if element == None:
-                        element = 0
-                    new_row.append(element)
-                    continue
-
-                if element == None:
-                    element = ""
-
-                if element not in self.col_mappings[col_num]:
-                    self.col_mappings[col_num][element] = self.col_counts[col_num]
-                    self.col_counts[col_num] += 1
-                
-                new_row.append(self.col_mappings[col_num][element])
-
-            new_X.append(new_row)
-
-        return new_X
-
-    def transform(self,X, y=None):
-        new_X = []
-        for row in X:
-            new_row = []
-            for col_num, element in enumerate(row):
-                if col_num not in self.categorical_features:
-                    if element == None:
-                        element = 0
-                    new_row.append(element)
-                    continue
-
-                # if element not in self.col_mappings[col_num]:
-                #     print 'adding element in transform'
-                #     self.col_mappings[col_num][element] = self.col_counts[col_num]
-                #     self.col_counts[col_num] += 1
-                
-                new_row.append(self.col_mappings[col_num].get(element, 0))
-
-            new_X.append(new_row)
-
-        return new_X
-
-    def fit_transform(self,X, y=None):
-        return self.fit(X)
 
 
 def find_all_correlations(db, table):
@@ -325,7 +273,102 @@ def find_all_correlations(db, table):
         print e
 
         
+def model(id_col, target_col, feature_cols, filter_obj=None, outfile=None, header=None, convert_id_func=None, test_ids_file=None, id_type=int):
+    num_features = len(feature_cols)
+    feature_cols = list(feature_cols)
+    rows, y, ids = make_data(target_col, feature_cols, id_col, filter_obj)
+    rows = np.nan_to_num(rows)
+    train_x, test_x, train_y, test_y, train_ids, test_ids = split_data(rows,y, ids, test_ids_file=test_ids_file, id_type=id_type)    
 
+    # train_x, test_x_2, train_y, test_y_2 = train_test_split(train_x, train_y, test_size=0.33, random_state=42)
+
+    k=2
+    cluster_clf = {}
+    cluster_pipeline = Pipeline([
+        ('scaler', preprocessing.StandardScaler(with_mean=True)),
+        ('cluster', MiniBatchKMeans(init='k-means++', n_clusters=k, batch_size=1000,
+                      n_init=10, max_no_improvement=10, verbose=1,
+                      random_state=0)),
+
+    ])
+
+
+    k_best = 50
+    if 50 >= num_features:
+        k_best ="all"
+    pca_components = min(num_features, 5)
+    pdb.set_trace()
+
+    cluster_pipeline.fit(train_x)
+    labels = cluster_pipeline.predict(train_x)
+    # pdb.set_trace()
+    for distinct_label in set(labels):
+        estimator = LinearSVC()
+        data_pipeline = Pipeline([
+                # ('vect', DictVectorizer()),
+                ('var', VarianceThreshold()),
+                ('scaler', preprocessing.StandardScaler(with_mean=True)),
+                ('ch2', SelectKBest(f_classif, k=k_best)),
+                ('pca', PCA(n_components=pca_components)),
+                # ('selector', RFECV(estimator, step=1, cv=3, verbose=1)),
+                # ('selector', linear_model.RandomizedLasso(selection_threshold=0.5,n_jobs=-1, verbose=1)),
+                ('clf', GradientBoostingClassifier(verbose=1,subsample=.7, max_depth=5, learning_rate=.01))
+        ])
+        cluster_x = train_x[labels==distinct_label]
+        cluster_y = train_y[labels==distinct_label]
+
+
+        data_pipeline.fit(cluster_x,cluster_y)
+        cluster_clf[distinct_label] = data_pipeline
+
+
+    # all_probs = []
+    # all_y = []
+    # test_labels = cluster_pipeline.predict(test_x_2)
+    # pdb.set_trace()
+    # for distinct_label in set(test_labels):
+    #     cluster_x = test_x_2[test_labels==distinct_label]
+    #     cluster_y =  test_y_2[test_labels==distinct_label]
+    #     clf = cluster_clf[distinct_label].named_steps["clf"]
+    #     # print "n features: ", data_pipeline.named_steps["selector"].n_features_
+    #     if clf.classes_[0] == 1:
+    #         pos_idx = 0
+    #     elif clf.classes_[1] == 1:
+    #         pos_idx = 1
+
+    #     probs = cluster_clf[distinct_label].predict_proba(cluster_x)[:,pos_idx].tolist()
+    #     all_probs += probs
+    #     all_y += list(cluster_y)
+
+    # auc = roc_auc_score(all_y, all_probs)
+    # print auc
+
+
+    all_probs = []
+    all_ids = []
+    test_labels = cluster_pipeline.predict(test_x)
+    for distinct_label in set(test_labels):
+        cluster_x = test_x[test_labels==distinct_label]
+        cluster_ids =  test_ids[test_labels==distinct_label]   
+
+        if len(cluster_x) < 0:
+            continue
+
+        clf = cluster_clf[distinct_label].named_steps["clf"]
+        # print "n features: ", data_pipeline.named_steps["selector"].n_features_
+        if clf.classes_[0] == 1:
+            pos_idx = 0
+        elif clf.classes_[1] == 1:
+            pos_idx = 1
+
+        probs = cluster_clf[distinct_label].predict_proba(cluster_x)[:,pos_idx].tolist()
+        all_probs += probs
+        all_ids += list(cluster_ids)
+        # print set(probs)
+
+    # print set(all_probs)
+    write_predictions(outfile, all_ids, all_probs, header=header, convert_id_func=convert_id_func)
+    
         
 
 
@@ -339,16 +382,33 @@ if __name__ == "__main__":
     # database_name = 'northwind'
     # db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name)) 
 
-    table_name = "Outcomes"
+    # table_name = "Outcomes"
+    # model_name = "ijcai__" + table_name
+    # print "models/%s"%model_name
+    # db = Database.load("models/%s"%model_name)
+    # print "db loaded"
+    # table = db.tables[table_name]
+    # target_col = table.get_col_by_name("label")
+    # id_col = table.get_col_by_name("id")
+    # feature_cols = get_predictable_features(table)
+    # random.shuffle(feature_cols)
+    # feature_cols = feature_cols
+    # def convert_id_func(row_ids):
+    #     with open("../datasets/ijcai/test_ids_convert.csv") as f:
+    #         return np.array(f.read().splitlines())
+    # model(id_col,target_col,feature_cols, outfile="ijcai_predict.csv", header="user_id,merchant_id,prob", convert_id_func=convert_id_func, test_ids_file="../datasets/ijcai/test_ids.csv")
+    
+    table_name = "Projects"
     print "models/%s"%table_name
     db = Database.load("models/%s"%table_name)
     print "db loaded"
     table = db.tables[table_name]
-    # make_all_features(db, db.tables[table_name])
-    # find_all_correlations(db, db.tables[table_name])
-    target_col = table.get_col_by_name("is_exciting")
-    feature_cols = set(get_predictable_features(table))
-    feature_cols.remove(target_col)
-    print target_col, feature_cols
-    model(target_col,feature_cols)
-    # cluster(table, k=5)
+    target_col = table.get_col_by_name("Outcome.is_exciting")
+    id_col = table.get_col_by_name("projectid")
+    feature_cols = get_predictable_features(table, exlucde=["Donations", "Outcomes"])
+    random.shuffle(feature_cols)
+    feature_cols = feature_cols
+    filter_col = table.get_col_by_name("date_posted")
+    filter_obj = FilterObject([(filter_col, ">", "2013-1-1")])
+    filter_obj=None
+    model(id_col,target_col,feature_cols, filter_obj, outfile="donors_predict.csv", header="projectid,is_exciting", test_ids_file="../datasets/donorschoose/test_ids.csv", id_type=str)
