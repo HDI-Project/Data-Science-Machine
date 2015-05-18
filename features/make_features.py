@@ -60,9 +60,11 @@ def make_all_features(db, table, caller=None, path=[], depth=0):
 
     print "*"*depth +  'making row features %s' % (table.name)
     make_row_features(db, table, caller, depth)
+    
     print "*"*depth +  'making one_to_one features %s' % (table.name)
     make_one_to_one_features(db, table, caller, depth)
 
+    make_flat_features(db, table, caller, depth) #Todo pass path so we don't bring in flat feature we do not need
 
     threads = []
     for related,fk in table.get_parent_tables():
@@ -85,16 +87,23 @@ def make_all_features(db, table, caller=None, path=[], depth=0):
 #############################
 def make_agg_features(db, table, caller, depth): 
     for fk in db.get_related_fks(table):
+        
+
         child_table = db.tables[fk.parent.table.name]
+
+        if child_table.name in table.config.get("excluded_agg_entities", []):
+            print "skip agg", child_table.name, table.name
+            continue
         
         if table.is_one_to_one(child_table, fk):
             continue
 
-        if not caller:
-            # agg_functions.make_intervals(db, fk)
-            agg_functions.apply_funcs(db, fk)
-        else:
-            agg_functions.apply_funcs(db,fk)
+        # interval = table.config.get("make_intervals", {}).get(child_table.name, None)
+
+        # if interval:
+        #     agg_functions.make_intervals(db, fk, n_intervals=interval["n_intervals"], delta_days=interval["delta_days"])
+        
+        agg_functions.apply_funcs(db,fk)
 
 
 #############################
@@ -132,9 +141,9 @@ def make_one_to_one_features(db, table, caller, depth):
 #############################
 # Row feature functions     #
 #############################
-def make_row_features(db, table, caller, depth):
-    row_functions.text_length(table)
-    # convert_datetime_weekday(table)
+def make_row_features(db ,table, caller, depth):
+    # pass
+    row_functions.apply_funcs(table)
     # add_ntiles(table)
 
 
@@ -147,40 +156,59 @@ if __name__ == "__main__":
 
     # database_name = 'ijcai'
     # table_name = "Outcomes"
+    # save_name = "models/"+database_name + "__" + table_name
     # url = 'mysql+mysqldb://kanter@localhost/%s' % (database_name)
     # engine = create_engine(url)
-    # for t in ["Behaviors_1", "Outcomes_1","Items_1", "Categorys_1", "Merchants_1","Brands_1", "Actions_1", "Users_1"]:
-    #     try:
-    #         qry = "drop table %s" % t
-    #         engine.execute(qry)
-    #     except Exception, e:
-    #         print e
+    # drop_tables ["Behaviors_1", "Outcomes_1","Items_1", "Categorys_1", "Merchants_1", "Merchants_2","Brands_1", "Actions_1", "Users_1", "Users_2"]:
+    # from ijcai_config import config
 
-    database_name = 'donorschoose'
-    table_name = "Projects"
+    # database_name = 'donorschoose'
+    # table_name = "Projects"
+    # save_name = "models/"+database_name + "__" + table_name
+    # url = 'mysql+mysqldb://kanter@localhost/%s' % (database_name)
+    # engine = create_engine(url)
+    # drop_tables =  ["Schools_1", "Teachers_1", "Vendors_1", "Donors_1", "Projects_1", "Outcomes_1", "Essays_1", "Donations_1"]
+    # from donorschoose_config import config
+
+    # database_name = 'grockit'
+    # table_name = "Outcomes"
+    # save_name = "models/"+database_name + "__" + table_name
+    # url = 'mysql+mysqldb://kanter@localhost/%s' % (database_name)
+    # engine = create_engine(url)
+    # drop_tables = ["Users_1", "QuestionSets_1", "Groups_1", "Tracks_1", "Subtracks_1", "Questions_1", "GameTypes_1", "Outcomes_1",  "Tags_1", "QuestionTags_1"]
+    
+    # from grockit_config import config
+
+    database_name = 'kdd2015'
+    table_name = "Enrollments"
+    save_name = "models/"+database_name + "__" + table_name
     url = 'mysql+mysqldb://kanter@localhost/%s' % (database_name)
     engine = create_engine(url)
-    for t in ["Schools_1", "Teachers_1", "Vendors_1", "Donors_1", "Projects_1", "Outcomes_1", "Essays_1"]:
-        try:
-            qry = "drop table %s" % t
-            engine.execute(qry)
-        except Exception, e:
-            print e
+    drop_tables = ["Courses_1", "Enrollments_1", "Log_1", "EventTypes_1", "ObjectChildren_1", "Objects_1", "Users_1", "Outcomes_1"]
+    
+    from kdd2015_config import config
 
+    yes = raw_input("Continue %s (y/n): " % database_name)
 
-
-    #reloaded db after dropping tables
-    db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name) ) 
-    table = db.tables[table_name]
-    make_all_features(db, table)
-    save_name = "models/"+database_name + "__" + table_name
-    db.save(save_name)
+    if yes == "y":
+        for t in drop_tables:
+            try:
+                qry = "drop table %s" % t
+                engine.execute(qry)
+            except Exception, e:
+                print e
+        #reloaded db after dropping tables
+        db = Database('mysql+mysqldb://kanter@localhost/%s' % (database_name), config=config) 
+            
+        table = db.tables[table_name]
+        make_all_features(db, table)
+        db.save(save_name)
 
     
-    db = Database.load(save_name)
-    table = db.tables[table_name]
+        db = Database.load(save_name)
+        table = db.tables[table_name]
 
-    debug.export_col_names(table)
+        debug.export_col_names(table)
 
     # debug.print_cols_names(db.tables['Orders'])
 

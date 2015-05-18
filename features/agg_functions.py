@@ -22,6 +22,22 @@ class AggFuncBase(FeatureBase):
             if len(self.disallowed.intersection(path_funcs)) > 0:
                 return False
 
+            #do not apply more than one filter
+            filter_cols = self.get_filter_cols(include_ignored=False)
+            num_filters = len(filter_cols)
+            max_filters = self.db.config.get("max_categorical_filter", 1)
+
+            path_filters = col.get_applied_filters(include_ignored=False)
+
+            if num_filters > 0:
+                print filter_cols, path_filters, set(filter_cols).intersection(path_filters)
+                overlap = set(filter_cols).intersection(path_filters) != set([])
+            else:
+                overlap = False
+
+            if overlap or num_filters >= max_filters:
+                return False
+
             #todo: not sure this matters anymore 
             # if last['base_column']['table'] == target_table:
             #     return False
@@ -30,9 +46,9 @@ class AggFuncBase(FeatureBase):
             # print 'max path', len(col.metadata['path'])
             return False
 
-        #only use columns with more than 1 distinct value
-        if len(col.get_distinct_vals()) < 2:
-            return False
+        # #only use columns with more than 1 distinct value
+        # if len(col.get_distinct_vals()) < 2:
+        #     return False
 
         #make sure the filter parameters allow aggregating this column
         if self.filter_obj and not self.filter_obj.can_agg(col):
@@ -57,11 +73,20 @@ class AggFuncMySQL(AggFuncBase):
         if not col.metadata['numeric']:
             return False
 
+        # for p in col.metadata["path"]:
+        #     if p.get("filter", None) != None:
+        #         return False
+
+        if col.metadata["path"] != [] and col.metadata["path"][-1]["base_column"].dsm_table == target_table:
+            print "agg flat feature from target table"
+            print target_table, col.metadata["path"]
+            print
+            return False
         return True
 
     def make_real_name(self, col, fk_name):
-        if self.filter_obj :
-                new_col = "[{func}({fk_name}.{col_name}_{filter_label})".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name, filter_label=self.filter_obj.get_label())
+        if self.filter_obj!= None and self.filter_obj.get_label() != "":
+            new_col = "{func}({fk_name}.{col_name}[{filter_label}])".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name, filter_label=self.filter_obj.get_label())
         else:
             new_col = "{func}({fk_name}.{col_name})".format(func=self.func,col_name=col.metadata['real_name'], fk_name=fk_name)
             
@@ -69,13 +94,14 @@ class AggFuncMySQL(AggFuncBase):
 
     def apply(self, fk):
         def do_qry(new_table_name, related_table, fk, agg_select, set_values, involved_cols):
-            #small optimization to avoid creating complex query for involved cols if not necessary
+            #optimization to avoid creating complex query for involved cols if not necessary
+            set_trace= False
             if all([c.column.table == related_table.base_table for c in involved_cols]):
                 related_table_name = related_table.base_table.name
             else:
+                set_trace= True
                 related_table_name = "(" + related_table.make_full_table_stmt(involved_cols) + ")"
 
-            table.flush_columns()
             params = {
                 "fk_select" : "`rt`.`%s`" % fk.parent.name,
                 "agg_select" : ", ".join(agg_select),
@@ -83,7 +109,7 @@ class AggFuncMySQL(AggFuncBase):
                 "fk_join_on" : "`b`.`{rt_col}` = `a`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
                 "related_table" : related_table_name,
                 "target_table" : new_table_name,
-                'where_stmt' : self.make_where_stmt()
+                'where_stmt' : self.make_where_stmt(alias="rt")
             }
 
             
@@ -98,7 +124,9 @@ class AggFuncMySQL(AggFuncBase):
             SET {set_values}
             WHERE {fk_join_on}
             """.format(**params)
-            print qry
+            # if set_trace:
+            #     pdb.set_trace()
+            # print qry
             table.execute(qry)
 
 
@@ -111,10 +139,8 @@ class AggFuncMySQL(AggFuncBase):
         parent_fk_col = related_table.columns[(fk.parent.table.name,fk.parent.name)]
 
         last_target_table = None
-        involved_cols = self.get_filter_cols() + [parent_fk_col]
-        count = 0
+        involved_cols = list(self.get_filter_col_set()) + [parent_fk_col]
         for col in related_table.get_column_info():
-            count += 1
             if not self.col_allowed(col, target_table=table):
                 continue
 
@@ -127,6 +153,9 @@ class AggFuncMySQL(AggFuncBase):
                 fk_name = fk.parent.table.name
 
             new_col = self.make_real_name(col, fk_name)
+
+            if table.has_feature(new_col): 
+                continue
 
             new_metadata = col.copy_metadata()
 
@@ -143,6 +172,8 @@ class AggFuncMySQL(AggFuncBase):
                 'categorical' : False,
                 'real_name' : new_col
             })
+            if self.filter_obj and self.filter_obj.interval_num != None:
+                new_metadata['interval_num'] = self.filter_obj.interval_num
             
             new_table_name,new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
             
@@ -151,16 +182,15 @@ class AggFuncMySQL(AggFuncBase):
 
             # print col, new_table_name, last_target_table
             if new_table_name!=last_target_table:
+                print new_col, table
                 do_qry(last_target_table, related_table, fk, agg_select, set_values, involved_cols)
                 agg_select = []
                 set_values = []
-                involved_cols = self.get_filter_cols() + [parent_fk_col]
+                involved_cols = list(self.get_filter_col_set()) + [parent_fk_col]
                 last_target_table = new_table_name
             # print "add col", table.table.name, new_col
             involved_cols.append(col)
 
-            if self.filter_obj and self.filter_obj.interval_num != None:
-                new_metadata['interval_num'] = self.filter_obj.interval_num
 
             select = "{func}(`{col_name}`) AS `{new_col}`".format(func=self.func.upper(),col_name=col.name, new_col=new_col_name)
             agg_select.append(select)
@@ -170,6 +200,7 @@ class AggFuncMySQL(AggFuncBase):
 
 
         if len(set_values) > 0:
+            print new_col, table
             do_qry(new_table_name, related_table, fk, agg_select, set_values, involved_cols)
 
 class AggSum(AggFuncMySQL):
@@ -198,9 +229,10 @@ class AggAvg(AggFuncMySQL):
     disallowed = set([])
 
 
-class AggCount(AggFuncBase):
-    name ="AggCount"
 
+class AggFK(AggFuncBase):
+    name ="AggFuncMySQL"
+    func = None
     def col_allowed(self, col, target_table=None):
         """
         returns true if this agg function can be applied to this col. otherwise returns false
@@ -210,10 +242,10 @@ class AggCount(AggFuncBase):
         return True
 
     def make_real_name(self, fk_name):
-        if self.filter_obj:
-            new_col = "count({fk_name}_{filter_label})".format(fk_name=fk_name, filter_label=self.filter_obj.get_label())
+        if self.filter_obj!= None and self.filter_obj.get_label() != "":
+            new_col = "{func}({fk_name}[{filter_label}])".format(func=self.func,fk_name=fk_name, filter_label=self.filter_obj.get_label())
         else:
-            new_col = "count({fk_name})".format(fk_name=fk_name)
+            new_col = "{func}({fk_name})".format(func=self.func,fk_name=fk_name)
 
         return new_col
 
@@ -231,6 +263,9 @@ class AggCount(AggFuncBase):
 
         real_name = self.make_real_name(fk_name)
 
+        if table.has_feature(real_name): 
+            return
+
         col = related_table.columns[(fk.parent.table.name,fk.parent.name)]
         
         new_metadata = col.copy_metadata()
@@ -238,44 +273,63 @@ class AggCount(AggFuncBase):
         path_add = {
             'base_column': col,
             'feature_type' : 'agg',
-            'feature_type_func' : 'count'
+            'feature_type_func' : self.func,
+            'filter' : self.filter_obj,
         }
 
         new_metadata.update({
             'real_name' : real_name,
             'path' : new_metadata['path'] + [path_add],
+            "numeric" : True
         })
 
         #if we are working with an interval filter, add interval number to new metadata
         if self.filter_obj and self.filter_obj.interval_num != None :
             new_metadata['interval_num'] = self.filter_obj.interval_num
 
-        new_table_name, new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata, flush=True)
+        new_table_name, new_col_name = table.create_column(column_datatypes.FLOAT.__visit_name__, metadata=new_metadata)
 
-        involved_cols = self.get_filter_cols() + [col]
+        involved_cols = list(self.get_filter_col_set()) + [col]
+
+        #optimization to avoid creating complex query for involved cols if not necessary
+        if all([c.column.table == related_table.base_table for c in involved_cols]):
+            related_table_name = related_table.base_table.name
+        else:
+            set_trace= True
+            related_table_name = "(" + related_table.make_full_table_stmt(involved_cols) + ")"
 
         params = {
             "fk_select" : "`%s`" % fk.parent.name,
             "fk_join_on" : "`b`.`{rt_col}` = `target_table`.`{a_col}`".format(rt_col=fk.parent.name, a_col=fk.column.name),
-            "related_table" : col.column.table.name,#related_table.make_full_table_stmt(involved_cols),
+            "related_table" : related_table_name,
             "table" : new_table_name,
             'new_col_name' : new_col_name,
-            'where_stmt' : self.make_where_stmt()
+            'where_stmt' : self.make_where_stmt(alias="rt"),
+            "func" : self.func
         }
-
+        # pdb.set_trace()
             
         qry = """
         UPDATE `{table}` target_table
-        LEFT JOIN ( SELECT {fk_select}, COUNT({fk_select}) as count
-               FROM {related_table}
+        LEFT JOIN ( SELECT {fk_select}, {func}({fk_select}) as val
+               FROM {related_table} rt
                {where_stmt}
                GROUP BY {fk_select}
             ) b
         ON {fk_join_on}
-        SET `target_table`.`{new_col_name}` = `b`.count
+        SET `target_table`.`{new_col_name}` = `b`.val
         where {fk_join_on}
         """.format(**params)
-        table.engine.execute(qry)
+        # print qry
+        table.execute(qry)
+
+class AggCount(AggFK):
+    name ="AggCount"
+    func = "COUNT"
+
+# class AggDistinct(AggFuncBase):
+#     name ="AggCountDistinct"
+#     func = "DISTINCT"
 
 
 def make_interval_filters(col, n_intervals, delta):
@@ -284,66 +338,84 @@ def make_interval_filters(col, n_intervals, delta):
 
     interval_filters = []
 
-    max_val = col.get_max_col_val()
+    max_val, min_val = col.get_max_min_col_val()
 
     for n in xrange(n_intervals-1,-1, -1):
         new_max = max_val - delta
+
         interval_range = [(col, "<=", date_to_str(max_val)), (col, ">", date_to_str(new_max))]
         f_obj = FilterObject(interval_range, label="int=%d"%n, interval_num=n)
         interval_filters.append(f_obj)
         max_val = new_max
+        
+        if max_val < min_val:
+            break
 
     return interval_filters
 
-def make_categorical_filters(table):
+def make_categorical_filters(target_table, related_table):
     # TODO handle when there are two tables with date columns
             # now apply with filtering if there's no caller
     filters = []
-    for col in table.get_categorical():
+    for col in related_table.get_categorical_filters():
+        path = [c["base_column"].dsm_table for c in  col.metadata["path"]]
+        print target_table, path
+        if path != [] and target_table in path:
+            continue
         for val in col.get_distinct_vals():
             f_obj = FilterObject([(col, "=", val)])
             filters.append(f_obj)
     return filters
             
 
-def make_intervals(db, fk):
+def make_intervals(db, fk, n_intervals=10, delta_days=7):
     related_table = db.tables[fk.parent.table.name]
     #todo: more intelligently choose the date col to make intervals from
-    col = related_table.get_column_info(first=True, match_func= lambda x: type(x.type)==column_datatypes.DATETIME)
-    n_intervals = 10
-    delta = timedelta(days=7)
-    interval_filters = make_interval_filters(col, n_intervals, delta)
-    for f_obj in interval_filters:
-        apply_funcs(db, fk, f_obj)
+    col = related_table.get_column_info(first=True, match_func= lambda x: type(x.type) in [column_datatypes.DATETIME, column_datatypes.DATE])
+    if col:
+        delta = timedelta(days=delta_days)
+        interval_filters = make_interval_filters(col, n_intervals, delta)
+        for f_obj in interval_filters:
+            apply_funcs(db, fk, f_obj)
 
-def func_thread(func, db, f_obj, fk):
-    func(db, f_obj).apply(fk)
 
 def apply_funcs(db, fk, filter_obj=None):
     funcs = get_functions()
     related_table = db.tables[fk.parent.table.name]
-    filters = make_categorical_filters(related_table)
 
-    #TODO change these loops so the func is reinited so often
-    #apply every function
+    #make sure we don't aggregate rows in test data
+    train_filter = related_table.make_training_filter()
+    if train_filter != None and filter_obj != None:
+        filter_obj = filter_obj.AND(train_filter)
+    elif train_filter:
+        filter_obj = train_filter
+
+
+    table = db.tables[fk.column.table.name]
+    filters = make_categorical_filters(table, related_table)
+
     threads = []
     for func in funcs:
         #apply
-        # func(db,filter_obj).apply(fk)
-
-        t = threading.Thread(target=func_thread, args=(func, db, filter_obj, fk))
-        t.start()
-        threads.append(t)
-
-        # for f_obj in filters:  
-        #     if filter_obj:  
-        #         f_obj = f_obj.AND(filter_obj)
-        #     t= threading.Thread(target=worker).start()
-        #     threads.append(t)
-
-    [t.join() for t in threads]
+        func(db,filter_obj).apply(fk)
+        # func(db).apply(fk)
+       
+        for f_obj in filters:
+            if func != AggCount:
+                continue
+                  
+            if filter_obj:  
+                f_obj = f_obj.AND(filter_obj)
+                    
+            
+            func(db,f_obj).apply(fk)
+            # t= threading.Thread(target=worker).start()
+            # threads.append(t)
         
+
+#SELECT Users.user_id, TIMESTAMPDIFF(DAY, MIN(time_stamp), MAX(time_stamp)) / (COUNT(*)-1) FROM Users join Behaviors on Behaviors.user_id = Users.user_id  group by Users.user_id limit 10;
+
 
 #agg oldest
 def get_functions():
-    return [AggCount, AggMax, AggSum, AggStd, AggMin, AggAvg]
+    return [AggCount, AggSum,AggAvg, AggMax, AggStd, AggMin]

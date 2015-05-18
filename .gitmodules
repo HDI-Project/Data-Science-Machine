@@ -1,0 +1,3 @@
+[submodule "DeepMining"]
+	path = DeepMining
+	url = https://github.com/sds-dubois/DeepMining.git

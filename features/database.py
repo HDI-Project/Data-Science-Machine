@@ -5,15 +5,46 @@ from sqlalchemy.orm import sessionmaker
 from table import DSMTable
 # import cPickle as pickle
 import dill
-
+import threading
 
 class Database:
-    def __init__(self, url):
+    def __init__(self, url, config=None):
         self.url = url
         self.engine = self.make_engine(url)
         self.metadata = MetaData(bind=self.engine)
         self.metadata.reflect()
-        self.tables  = dict([(t.name, DSMTable(t, self)) for t in self.metadata.sorted_tables])
+
+        self.config = config
+
+        #parallel table init
+        self.tables_lock = threading.Lock()
+        self.tables = {}
+        threads = []
+        for table in self.metadata.sorted_tables:
+            t = threading.Thread(target=self.make_dsm_table, args=(table,))
+            t.start()
+            threads.append(t)
+        [t.join() for t in threads]
+
+    def execute(self, qry):
+        try:
+            res = self.engine.execute(qry)
+        except Exception, e:
+            if e.message == "(OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')":
+                print e
+                res = self.execute(qry)
+            else:
+                print e
+                raise e
+
+        return res
+
+    def make_dsm_table(self, table):
+        dsm_table = DSMTable(table, self)
+
+        self.tables_lock.acquire()
+        self.tables[table.name] = dsm_table
+        self.tables_lock.release()
 
     def __getstate__(self):
         """
@@ -29,7 +60,6 @@ class Database:
 
     def __setstate__(self, state):
         #unpickle db state
-        # pdb.set_trace()
         state['engine'] = self.make_engine(state['url'])
         state['metadata'] = MetaData(bind=state['engine']).reflect()
         self.__dict__.update(state) #update now so we have these properties when we call set_db
@@ -47,7 +77,6 @@ class Database:
     @staticmethod
     def load(filename):
         db = dill.load( open( filename, "rb" ) )
-        print db
         return db
 
     def make_engine(self, url):

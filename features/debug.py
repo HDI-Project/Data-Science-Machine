@@ -5,4 +5,6 @@ def print_cols_names(table):
 
 
 def export_col_names(table):
-	print utils.get_col_names(table)
+	cols  = utils.get_col_names(table)
+	print "\n".join([str(x) for x in cols])
+

@@ -11,17 +11,27 @@ from column import DSMColumn
 from collections import defaultdict
 
 import threading
-
+from filters import FilterObject
 
 class DSMTable:
-    MAX_COLS_TABLE = 200
+    MAX_COLS_TABLE = 500
+
+    config = {
+        "column_types" : {"FLOAT": .8, "INTEGER" :.2}
+    }
 
     def __init__(self, table, db):
+        self.lock = threading.Lock()
+
         self.db = db
         self.name = table.name
         self.base_table = table
         self.tables = {table.name: table}
         self.engine = db.engine
+        
+        self.config.update(self.db.config.get("entities", {}).get(self.name, {}))
+
+        self.num_rows = self.engine.execute("SELECT count(*) from `%s`" % (self.name)).fetchall()[0][0]
 
         self.primary_key_names = [key.name for key in table.primary_key]
 
@@ -30,16 +40,16 @@ class DSMTable:
         self.cols_to_drop = defaultdict(list)
 
         self.num_added_tables = 0
-        self.table_col_counts = {}
         self.curr_table = None
 
-        self.num_rows = self.engine.execute("SELECT count(*) from `%s`" % (self.name)).fetchall()[0][0]
+        self.free_cols = {}
+
+        self.feature_list = set([])
 
         self.init_columns()
 
-        self.one_to_one = {}
+        self.one_to_one = self.config.get("one_to_one", {})
 
-        self.lock = threading.Lock()
 
     def __getstate__(self):
         """
@@ -49,6 +59,9 @@ class DSMTable:
         del state['db']        
         del state['engine']
         return state
+
+    def __repr__(self):
+        return "DSMTable %s"%(self.name)
 
     def set_db(self, db):
         self.db = db
@@ -66,19 +79,40 @@ class DSMTable:
         for col in self.base_table.c:
             col = DSMColumn(col, dsm_table=self)
 
+            is_numeric = type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key)
+            is_categorical = False
+
+                
+
             col.update_metadata({
-                'numeric' : type(col.type) in datatypes and not (col.primary_key or col.has_foreign_key),
+                'numeric' : is_numeric,
                 'real_name' : col.name,
-                'categorical' : False
+                'categorical' : is_categorical,
+                'categorical_filter' : False
             })
 
+            if col.name in self.config.get("feature_metadata", {}):
+                col.update_metadata(self.config["feature_metadata"][col.name])
+                print col.metadata
             self.columns[(col.column.table.name,col.name)] = col
 
         #set categorical columns
+        # todo figure out how to do it with large tables. perhaps do some sort of sampling
+        print self.num_rows, self.name
+        if self.num_rows >= 10000000: #ten million
+            return
+
         for col, count in self.get_num_distinct(self.get_column_info()):
             if count <= 2:
                 col.metadata["categorical"] = True
+                col.metadata["binary"] = True
 
+    def execute(self, qry):
+        return self.db.execute(qry)
+
+    #############################
+    # Database operations       #
+    #############################
     def make_new_table(self):
         self.num_added_tables += 1
         new_table_name = self.name + "_" + str(self.num_added_tables)
@@ -98,156 +132,120 @@ class DSMTable:
             """.format(new_table_name=new_table_name, old_table=self.name)
             self.engine.execute(qry)
         except Exception,e:
-            print
+            print e
 
         self.tables[new_table_name] = Table(new_table_name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
-        self.table_col_counts[new_table_name] = 0
         return self.tables[new_table_name]
 
 
-    def make_column_name(self):
-        if (self.curr_table == None or
-           self.table_col_counts[self.curr_table.name] >= self.MAX_COLS_TABLE):
-
-            self.curr_table = self.make_new_table()
-
-        name = self.curr_table.name + "__" +  str(self.table_col_counts[self.curr_table.name])
-        self.table_col_counts[self.curr_table.name] +=1
-        return self.curr_table.name,name
-
-    def execute(self, qry):
-
-        try:
-            res = self.engine.execute(qry)
-        except Exception, e:
-            if e.message == "(OperationalError) (1205, 'Lock wait timeout exceeded; try restarting transaction')":
-                print e
-                res = self.execute(qry)
-            else:
-                print e
-
-        return res
-
-    #############################
-    # Database operations       #
-    #############################
-    def create_column(self, column_type, metadata={},flush=False, drop_if_exists=True):
+    def create_column(self, column_type, metadata={}):
         """
-        add column with name column_name of type column_type to this table. if column exists, drop first
-
-        todo: suport where to add it
+        get a column to insert data into
         """
-        self.lock.acquire()
-        if (type(column_type) == DSMColumn):
-            self.columns[(column_type.column.table.name,column_type.name)] = column_type
-            print column_type.name, column_type.metadata["real_name"]
-            self.lock.release()
-            return column_type.column.table.name,column_type.name
+        with self.lock:
+            if self.curr_table == None:
+                self.make_cols()
+
+            #get free column of type
+            if len(self.free_cols[self.curr_table.name][column_type]) <= 0:
+                self.make_cols()
+
+            col = self.free_cols[self.curr_table.name][column_type].pop()
+
+            #update metadeta
+            col.update_metadata(metadata)
+
+            #move to columns array
+            self.add_column(col)
+            
+        #todo update return type
+        return col.column.table.name,col.name
+
+    def add_column(self, col):
+        print "added:", self.name, col.metadata["real_name"]
+        self.feature_list.add(col.metadata["real_name"])
+        self.columns[(col.column.table.name,col.name)] = col
+
+    def has_feature(self, name):
+        return name in self.feature_list
+
+    def make_cols(self):
+        """
+        make columns in a new table for use by create_column
+        make them in the proportions supplied by column_types
+        """
+        column_types = self.config.column_types
+        table = self.make_new_table()
+        #update current table
+        self.curr_table = table
+
+        cols_to_add = []
+        count = 0
+        for column_type in column_types:
+            num = int(self.MAX_COLS_TABLE * .8)
+            cols_to_add += [(table.name+"__"+str(c), column_type) for c in range(count, count+num)]
+            count += num
+
+        values=[]
+        for (name, col_type) in cols_to_add:
+            values.append("ADD COLUMN `%s` %s" % (name, col_type))
+
+        values = ", ".join(values)
+        qry = """
+            ALTER TABLE `{table}`
+            {cols_to_add}
+            """.format(table=table.name, cols_to_add=values)
+        self.engine.execute(qry)
+
         
+        #reflect table again to have update columns
+        table = Table(table.name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
+        self.tables[table.name] = table
+        self.free_cols[table.name] = {}
+        #for new column in the database, add it to free columns
+        for (name, col_type) in cols_to_add:
+            if col_type not in self.free_cols[table.name]:
+                self.free_cols[table.name][col_type] = set([])
 
-        table_name,column_name = self.make_column_name()
-        self.cols_to_add[table_name] += [(column_name, column_type, metadata)]
-        print column_name, metadata["real_name"]
-        self.lock.release()
-        if flush:
-            self.flush_columns(drop_if_exists=drop_if_exists)
-
-        return table_name,column_name
-    
-    def drop_column(self, table_name, column_name, flush=False):
-        """
-        drop column with name column_name from this table
-        """
-        self.cols_to_drop[table_name] += [column_name]
-        if flush:
-            self.flush_columns(drop_if_exists=drop_if_exists)
-
-    def flush_columns(self, drop_if_exists=True):
-        self.lock.acquire()
-        #first, check which of cols_to_add need to be dropped first
-        for table_name in self.cols_to_add:
-            for (name, col_type, metadata) in self.cols_to_add[table_name]:
-                if drop_if_exists and self.has_column(table_name,name):
-                    self.drop_column(table_name, name)
-
-        #second, flush columns that need to be dropped
-        for table_name in self.cols_to_drop:
-            values = []
-            for name in self.cols_to_drop[table_name]:
-                del self.columns[(table_name, name)]
-                values.append("DROP `%s`" % (name))
-            if len(values) > 0:
-                values = ", ".join(values)
-                self.engine.execute(
-                    """
-                    ALTER TABLE `{table}`
-                    {cols_to_drop}
-                    """.format(table=table_name, cols_to_drop=values)
-                ) #very bad, fix how parameters are substituted in
-
-                self.cols_to_drop[table_name] = []
-            
-        #third, flush columns that need to be added
-        for table_name in self.cols_to_add:
-            values = []
-            new_col_metadata = {}
-            for (name, col_type, metadata) in self.cols_to_add[table_name]:
-                new_col_metadata[name] = metadata
-                values.append("ADD COLUMN `%s` %s" % (name, col_type))
-
-            if len(values) > 0:
-                values = ", ".join(values)
-                qry = """
-                    ALTER TABLE `{table}`
-                    {cols_to_add}
-                    """.format(table=table_name, cols_to_add=values)
-                self.engine.execute(qry)
-                self.cols_to_add[table_name] = []
-
-            #reflect table again to have update columns
-            # TODO check to make sure old column reference still work
-            self.tables[table_name] = Table(table_name, MetaData(bind=self.engine), autoload=True, autoload_with=self.engine)
-            
-            #for every column in the database, make sure we have it accounted for in our data structure
-            for c in self.tables[table_name].c:
-                if c.name in new_col_metadata:
-                        col = DSMColumn(c, dsm_table=self, metadata=new_col_metadata[c.name])
-                        self.columns[(col.column.table.name,col.name)] = col
-
-        self.lock.release()
+            col = DSMColumn(getattr(table.c, name), dsm_table=self)
+            self.free_cols[table.name][col_type].add(col)
+        
 
     ###############################
     # Table info helper functions #
     ###############################
-    def get_column_info(self, prefix='', ignore_relationships=False, match_func=None, first=False, set_trace=False):
+    def get_column_info(self, prefix='', ignore_relationships=False, match_func=None, first=False, set_trace=False, ignore=True):
         """
         return info about columns in this table. 
         info should be things that are read directly from database or something that is dynamic at query time. everything else should be part of metadata
-
         """
-        cols = []
-        for col in self.columns.values():
-            if ignore_relationships and col.primary_key:
-                continue
+        with self.lock:
+            cols = []
+            for col in self.columns.values():
+                if ignore_relationships and col.primary_key:
+                    continue
 
-            if ignore_relationships and col.has_foreign_key:
-                continue
+                if ignore_relationships and col.has_foreign_key:
+                    continue
 
-            if set_trace:    
-                pdb.set_trace()
+                if ignore and col.metadata.get("ignore", False):
+                    continue
 
-            if match_func != None and not match_func(col):
-                continue
+                if set_trace:    
+                    pdb.set_trace()
 
+                if match_func != None and not match_func(col):
+                    continue
+
+                if first:
+                    return col
+
+                cols.append(col)
+            
             if first:
-                return col
+                return None
 
-            cols.append(col)
-        
-        if first:
-            return None
-
-        return sorted(cols, key=lambda c: c.column.table.name)
+            return sorted(cols, key=lambda c: c.column.table.name)
 
     def get_primary_key(self):
         return self.get_column_info(match_func= lambda x: x.primary_key, first=True)
@@ -286,6 +284,10 @@ class DSMTable:
         return parents.union(children)
 
     def is_one_to_one(self, related, fk):
+        if self.num_rows >= 10000000 or related.num_rows >= 10000000: #ten million
+            return False
+
+
         #check one to one cache for either table to avoid requerying
         if related in self.one_to_one:
             return self.one_to_one[related] 
@@ -313,7 +315,7 @@ class DSMTable:
         """
         get first column that matches either real name or database name of col_name
         """
-        return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name or c.metadata["real_name"]==col_name, first=True)
+        return self.get_column_info(match_func=lambda c, col_name=col_name: c.name == col_name or c.metadata["real_name"]==col_name, first=True, ignore=False)
 
     def names_to_cols(self, names):
         return [self.get_col_by_name(n) for n in names]
@@ -362,7 +364,8 @@ class DSMTable:
 
         return cat_cols
 
-
+    def get_categorical_filters(self):
+        return self.get_column_info(match_func=lambda x: x.metadata["categorical_filter"] == True)
 
     def get_num_distinct(self, cols):
         """
@@ -381,22 +384,22 @@ class DSMTable:
 
         return zip(cols,counts)
 
-    def get_rows(self, cols, limit=None):
+    def get_rows(self, cols, filter_obj=None, limit=None):
         """
         return rows with values for the columns specificed by col
         """
 
 
-        qry = self.make_full_table_stmt(cols, limit=limit)
+        qry = self.make_full_table_stmt(cols, filter_obj=filter_obj, limit=limit)
         rows = self.engine.execute(qry)
         return rows
 
 
-    def get_rows_as_dict(self, cols):
+    def get_rows_as_dict(self, cols,limit=None):
         """
         return rows with values for the columns specificed by col
         """
-        rows = self.get_rows(cols)
+        rows = self.get_rows(cols, limit=limit)
         rows = [dict(r) for r in rows.fetchall()]
         return rows
 
@@ -404,7 +407,7 @@ class DSMTable:
     ###############################
     # Query helper functions      #
     ###############################
-    def make_full_table_stmt(self, cols=None, limit=None):
+    def make_full_table_stmt(self, cols=None, filter_obj=None, limit=None):
         """
         given a set of colums, make a select statement that generates a table where these columns can be selected from.
         return the string of the query to do this
@@ -490,17 +493,32 @@ class DSMTable:
         FROM = self.base_table.name
         pk = self.get_primary_key()
 
+        WHERE = ""
+        if filter_obj != None:
+            WHERE = filter_obj.to_where_statement()
+
+
+        LIMIT = ""
         if limit != None:
             LIMIT = "LIMIT %d" % limit
-        else:
-            LIMIT = ""
 
         qry = """
         SELECT {SELECT}
         FROM `{FROM}`
         {JOIN}
+        {WHERE}
         {LIMIT}
-        """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name, LIMIT=LIMIT) 
+        """.format(SELECT=SELECT, FROM=FROM, JOIN=JOIN, primary_key=pk.name, WHERE=WHERE, LIMIT=LIMIT) 
 
-        # print qry       
         return qry
+
+    def make_training_filter(self):
+        train_filters = self.config.get("train_filter", None)
+        all_filters = []
+        if train_filters != None:
+            for f in train_filters:
+                train_filter = (self.get_col_by_name(f[0]), f[1], f[2])
+                all_filters.append(train_filter)        
+            
+            return FilterObject(all_filters)
+        return None
